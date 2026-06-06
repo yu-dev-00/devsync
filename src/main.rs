@@ -1,4 +1,8 @@
 mod config;
+mod diff;
+mod exclude;
+mod manifest;
+mod path_safety;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
