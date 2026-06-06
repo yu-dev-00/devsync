@@ -124,3 +124,41 @@ fn agent_accepts_config_and_returns_manifest() {
         other => panic!("unexpected response: {other:?}"),
     }
 }
+
+#[test]
+fn agent_rejects_unsafe_file_path_without_terminating() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    // Unsafe path with a 3-byte payload.
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::File { path: "../evil.txt".into(), size: 3, hash: "x".into() },
+    )
+    .unwrap();
+    input.extend_from_slice(b"abc");
+    // A following request must still be processed (agent not terminated, stream aligned).
+    protocol::write_message(&mut input, &protocol::Message::ManifestRequest).unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+
+    let mut cursor = Cursor::new(output);
+    let first = protocol::read_message(&mut cursor).unwrap();
+    // First response: an Error about the unsafe path (not a process termination).
+    match first {
+        protocol::Message::Error { message } => assert!(message.contains("unsafe") || message.contains("relative") || message.contains("absolute")),
+        other => panic!("expected Error for unsafe path, got {other:?}"),
+    }
+    // Second response: the agent is still alive and answers the ManifestRequest
+    // (a Manifest, since config was provided).
+    let second = protocol::read_message(&mut cursor).unwrap();
+    assert!(matches!(second, protocol::Message::Manifest { .. }));
+}

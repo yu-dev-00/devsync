@@ -52,6 +52,10 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
     };
     let plan = diff::calculate_diff(&local_manifest, &remote_manifest, delete);
 
+    // NOTE (v1 limitation): file uploads are sent fire-and-forget; per-file
+    // agent responses (e.g. a hash-mismatch Error) are not read here. Such an
+    // Error is surfaced when the SyncComplete ack is read below, where it causes
+    // the sync to bail. A future version should read per-file acknowledgements.
     for path in &plan.upload {
         let entry = local_manifest
             .files
