@@ -162,3 +162,27 @@ fn agent_rejects_unsafe_file_path_without_terminating() {
     let second = protocol::read_message(&mut cursor).unwrap();
     assert!(matches!(second, protocol::Message::Manifest { .. }));
 }
+
+#[test]
+fn agent_rejects_unknown_exec_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    protocol::write_message(&mut input, &protocol::Message::Exec { name: "build".into() }).unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+
+    let response = protocol::read_message(&mut Cursor::new(output)).unwrap();
+    assert_eq!(
+        response,
+        protocol::Message::Error { message: "commands.build is not defined".into() }
+    );
+}

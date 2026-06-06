@@ -66,13 +66,19 @@ fn main() -> Result<()> {
             sync::sync(cfg, args.delete)?;
         }
         Command::Build => {
-            println!("build is not implemented yet");
+            let cfg = cfg.as_ref().expect("config loaded for local commands");
+            let code = sync::sync_then_exec(cfg, "build")?;
+            std::process::exit(code);
         }
         Command::Run => {
-            println!("run is not implemented yet");
+            let cfg = cfg.as_ref().expect("config loaded for local commands");
+            let code = sync::exec(cfg, "run")?;
+            std::process::exit(code);
         }
         Command::Test => {
-            println!("test is not implemented yet");
+            let cfg = cfg.as_ref().expect("config loaded for local commands");
+            let code = sync::sync_then_exec(cfg, "test")?;
+            std::process::exit(code);
         }
         Command::Agent(args) => {
             if !args.stdio {
