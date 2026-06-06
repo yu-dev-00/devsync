@@ -1,3 +1,4 @@
+mod agent;
 mod config;
 mod diff;
 mod exclude;
@@ -75,7 +76,7 @@ fn main() -> Result<()> {
             if !args.stdio {
                 anyhow::bail!("agent requires --stdio");
             }
-            println!("agent stdio is not implemented yet");
+            agent::run_stdio_agent()?;
         }
     }
 
