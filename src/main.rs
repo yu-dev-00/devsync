@@ -1,3 +1,5 @@
+mod config;
+
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
@@ -40,6 +42,13 @@ struct AgentArgs {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    let cfg = if matches!(&cli.command, Command::Agent(_)) {
+        None
+    } else {
+        Some(config::Config::load(&cli.config)?)
+    };
+    let _cfg = cfg;
 
     match cli.command {
         Command::Status => {
