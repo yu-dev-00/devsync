@@ -59,7 +59,10 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     )?;
                     continue;
                 };
-                path_safety::validate_relative_path(&path)?;
+                if let Err(error) = path_safety::validate_relative_path(&path) {
+                    protocol::write_message(&mut writer, &Message::Error { message: error.to_string() })?;
+                    continue;
+                }
                 let actual_hash = blake3::hash(&bytes).to_hex().to_string();
                 if actual_hash != hash {
                     protocol::write_message(
@@ -84,7 +87,10 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 };
                 let mut deleted = 0;
                 for path in delete {
-                    path_safety::validate_relative_path(&path)?;
+                    if let Err(error) = path_safety::validate_relative_path(&path) {
+                        protocol::write_message(&mut writer, &Message::Error { message: error.to_string() })?;
+                        continue;
+                    }
                     let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
                     if target.is_file() {
                         std::fs::remove_file(target)?;
