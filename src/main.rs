@@ -65,6 +65,10 @@ fn main() -> Result<()> {
             let cfg = cfg.as_ref().expect("config loaded for local commands");
             sync::sync(cfg, args.delete)?;
         }
+        // Note: these arms end with std::process::exit(code), which skips destructors
+        // (RemoteClient::Drop). That is safe here — exec() returns only after the
+        // remote Exit frame is received, so the protocol exchange is already complete;
+        // the OS reaps the ssh subprocess on process exit.
         Command::Build => {
             let cfg = cfg.as_ref().expect("config loaded for local commands");
             let code = sync::sync_then_exec(cfg, "build")?;

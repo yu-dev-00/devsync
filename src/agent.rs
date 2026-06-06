@@ -118,6 +118,11 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     continue;
                 };
 
+                // NOTE (v1 limitation): `.output()` buffers all stdout/stderr until the
+                // process exits, so a long-running command shows no output until it
+                // finishes. The protocol and client exec loop already support incremental
+                // Output frames; a future version should `.spawn()` and stream output via
+                // reader threads. PowerShell output is decoded lossily below.
                 let output = std::process::Command::new("powershell")
                     .arg("-NoProfile")
                     .arg("-ExecutionPolicy")
