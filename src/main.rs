@@ -3,6 +3,7 @@ mod diff;
 mod exclude;
 mod manifest;
 mod path_safety;
+mod protocol;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
