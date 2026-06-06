@@ -93,3 +93,29 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
 
     Ok(())
 }
+
+pub fn exec(config: &Config, name: &str) -> Result<i32> {
+    config.command(name)?;
+    let mut client = RemoteClient::connect(config)?;
+    client.write(&Message::Exec { name: name.to_string() })?;
+
+    loop {
+        match client.read()? {
+            Message::Output { stream, data } => {
+                if stream == "stderr" {
+                    eprint!("{data}");
+                } else {
+                    print!("{data}");
+                }
+            }
+            Message::Exit { code } => return Ok(code),
+            Message::Error { message } => bail!(message),
+            other => bail!("unexpected response to exec: {other:?}"),
+        }
+    }
+}
+
+pub fn sync_then_exec(config: &Config, name: &str) -> Result<i32> {
+    sync(config, false)?;
+    exec(config, name)
+}

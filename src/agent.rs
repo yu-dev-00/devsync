@@ -7,7 +7,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 struct AgentConfig {
     remote_dir: PathBuf,
-    #[allow(dead_code)]
     commands: BTreeMap<String, String>,
 }
 
@@ -101,6 +100,47 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     uploaded: 0,
                     deleted,
                     skipped: 0,
+                })?;
+            }
+            Message::Exec { name } => {
+                let Some(config) = &config else {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: "agent config has not been received".into() },
+                    )?;
+                    continue;
+                };
+                let Some(command) = config.commands.get(&name) else {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: format!("commands.{name} is not defined") },
+                    )?;
+                    continue;
+                };
+
+                let output = std::process::Command::new("powershell")
+                    .arg("-NoProfile")
+                    .arg("-ExecutionPolicy")
+                    .arg("Bypass")
+                    .arg("-Command")
+                    .arg(command)
+                    .current_dir(&config.remote_dir)
+                    .output()?;
+
+                if !output.stdout.is_empty() {
+                    protocol::write_message(&mut writer, &Message::Output {
+                        stream: "stdout".into(),
+                        data: String::from_utf8_lossy(&output.stdout).to_string(),
+                    })?;
+                }
+                if !output.stderr.is_empty() {
+                    protocol::write_message(&mut writer, &Message::Output {
+                        stream: "stderr".into(),
+                        data: String::from_utf8_lossy(&output.stderr).to_string(),
+                    })?;
+                }
+                protocol::write_message(&mut writer, &Message::Exit {
+                    code: output.status.code().unwrap_or(1),
                 })?;
             }
             _ => {
