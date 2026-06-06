@@ -58,6 +58,13 @@ impl RemoteClient {
         protocol::write_message(&mut self.writer, message)
     }
 
+    pub fn raw_write_all(&mut self, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+        self.writer.write_all(bytes)?;
+        self.writer.flush()?;
+        Ok(())
+    }
+
     pub fn read(&mut self) -> Result<Message> {
         protocol::read_message(&mut self.reader)
     }
