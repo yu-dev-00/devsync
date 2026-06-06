@@ -14,6 +14,70 @@ mod protocol;
 #[path = "../src/agent.rs"]
 mod agent;
 
+// Step 1: failing test – agent_writes_file_payload_under_remote_dir
+#[test]
+fn agent_writes_file_payload_under_remote_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::File {
+            path: "src/main.txt".into(),
+            size: 5,
+            hash: blake3::hash(b"hello").to_hex().to_string(),
+        },
+    )
+    .unwrap();
+    input.extend_from_slice(b"hello");
+
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("src").join("main.txt")).unwrap(),
+        "hello"
+    );
+}
+
+// Step 8 regression: no-config File must consume payload to keep stream aligned
+#[test]
+fn agent_consumes_file_payload_even_without_config() {
+    // A File arriving before Config must still consume its payload so a
+    // following framed message is parsed correctly.
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::File { path: "a.txt".into(), size: 3, hash: "x".into() },
+    )
+    .unwrap();
+    input.extend_from_slice(b"abc");
+    protocol::write_message(&mut input, &protocol::Message::ManifestRequest).unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+
+    // Two responses expected: Error (no config for File) then Error (no config for ManifestRequest).
+    let mut cursor = Cursor::new(output);
+    let first = protocol::read_message(&mut cursor).unwrap();
+    let second = protocol::read_message(&mut cursor).unwrap();
+    assert_eq!(
+        first,
+        protocol::Message::Error { message: "agent config has not been received".into() }
+    );
+    assert_eq!(
+        second,
+        protocol::Message::Error { message: "agent config has not been received".into() }
+    );
+}
+
 #[test]
 fn agent_rejects_manifest_before_config() {
     let mut input = Vec::new();

@@ -62,7 +62,8 @@ fn main() -> Result<()> {
             sync::status(cfg)?;
         }
         Command::Sync(args) => {
-            println!("sync is not implemented yet; delete={}", args.delete);
+            let cfg = cfg.as_ref().expect("config loaded for local commands");
+            sync::sync(cfg, args.delete)?;
         }
         Command::Build => {
             println!("build is not implemented yet");

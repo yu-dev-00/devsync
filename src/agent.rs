@@ -1,4 +1,4 @@
-use crate::{exclude::ExcludeMatcher, manifest, protocol::{self, Message}};
+use crate::{exclude::ExcludeMatcher, manifest, path_safety, protocol::{self, Message}};
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -45,6 +45,57 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
             }
             Message::Hello { version } => {
                 protocol::write_message(&mut writer, &Message::Hello { version })?;
+            }
+            Message::File { path, size, hash } => {
+                // Always consume the raw payload bytes first to keep the stream aligned,
+                // regardless of whether config has been received.
+                let mut bytes = vec![0u8; size as usize];
+                reader.read_exact(&mut bytes)?;
+
+                let Some(config) = &config else {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: "agent config has not been received".into() },
+                    )?;
+                    continue;
+                };
+                path_safety::validate_relative_path(&path)?;
+                let actual_hash = blake3::hash(&bytes).to_hex().to_string();
+                if actual_hash != hash {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: format!("hash mismatch for {path}") },
+                    )?;
+                    continue;
+                }
+                let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(target, bytes)?;
+            }
+            Message::SyncPlan { upload: _, delete } => {
+                let Some(config) = &config else {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: "agent config has not been received".into() },
+                    )?;
+                    continue;
+                };
+                let mut deleted = 0;
+                for path in delete {
+                    path_safety::validate_relative_path(&path)?;
+                    let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                    if target.is_file() {
+                        std::fs::remove_file(target)?;
+                        deleted += 1;
+                    }
+                }
+                protocol::write_message(&mut writer, &Message::SyncComplete {
+                    uploaded: 0,
+                    deleted,
+                    skipped: 0,
+                })?;
             }
             _ => {
                 protocol::write_message(
