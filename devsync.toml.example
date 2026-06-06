@@ -1,0 +1,30 @@
+[connection]
+host = "remote-pc"
+user = "user"
+port = 22
+agent_path = "C:\\tools\\devsync.exe"
+
+[paths]
+local_dir = "."
+remote_dir = "C:\\work\\project"
+
+[commands]
+build = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
+run = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1"
+test = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\test.ps1"
+
+[sync]
+exclude = [
+  ".git",
+  ".devsync",
+  "devsync.toml",
+  "bin",
+  "obj",
+  "build",
+  "dist",
+  "logs",
+  "artifacts",
+  "node_modules",
+  ".vs",
+  ".vscode"
+]
