@@ -186,3 +186,18 @@ fn agent_rejects_unknown_exec_name() {
         protocol::Message::Error { message: "commands.build is not defined".into() }
     );
 }
+
+#[test]
+fn agent_rejects_exec_before_config() {
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Exec { name: "run".into() }).unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+
+    let response = protocol::read_message(&mut Cursor::new(output)).unwrap();
+    assert_eq!(
+        response,
+        protocol::Message::Error { message: "agent config has not been received".into() }
+    );
+}
