@@ -1,10 +1,12 @@
 mod agent;
+mod client;
 mod config;
 mod diff;
 mod exclude;
 mod manifest;
 mod path_safety;
 mod protocol;
+mod sync;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -54,11 +56,10 @@ fn main() -> Result<()> {
     } else {
         Some(config::Config::load(&cli.config)?)
     };
-    let _cfg = cfg;
-
     match cli.command {
         Command::Status => {
-            println!("status is not implemented yet");
+            let cfg = cfg.as_ref().expect("config loaded for local commands");
+            sync::status(cfg)?;
         }
         Command::Sync(args) => {
             println!("sync is not implemented yet; delete={}", args.delete);
