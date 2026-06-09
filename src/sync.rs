@@ -8,6 +8,20 @@ use crate::{
 };
 use anyhow::{bail, Result};
 
+/// Read a file under `local_dir` (relative slash path) and build a `File`
+/// message whose `size` and `hash` are derived from the bytes actually read,
+/// guaranteeing the header matches the payload even if the file changed since
+/// the manifest was built.
+pub fn build_file_message(local_dir: &std::path::Path, rel_path: &str) -> Result<(Message, Vec<u8>)> {
+    let bytes = std::fs::read(local_dir.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR)))?;
+    let message = Message::File {
+        path: rel_path.to_string(),
+        size: bytes.len() as u64,
+        hash: blake3::hash(&bytes).to_hex().to_string(),
+    };
+    Ok((message, bytes))
+}
+
 pub fn status(config: &Config) -> Result<()> {
     let local_manifest = local_manifest(config)?;
     let remote_manifest = remote_manifest(config)?;
@@ -57,19 +71,8 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
     // Error is surfaced when the SyncComplete ack is read below, where it causes
     // the sync to bail. A future version should read per-file acknowledgements.
     for path in &plan.upload {
-        let entry = local_manifest
-            .files
-            .iter()
-            .find(|entry| &entry.path == path)
-            .ok_or_else(|| anyhow::anyhow!("missing local manifest entry for {path}"))?;
-        let bytes = std::fs::read(
-            config.paths.local_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR)),
-        )?;
-        client.write(&Message::File {
-            path: entry.path.clone(),
-            size: entry.size,
-            hash: entry.hash.clone(),
-        })?;
+        let (message, bytes) = build_file_message(&config.paths.local_dir, path)?;
+        client.write(&message)?;
         client.raw_write_all(&bytes)?;
     }
 
