@@ -18,7 +18,8 @@ pub struct ManifestEntry {
 
 pub fn build_manifest(root: &Path, excludes: &ExcludeMatcher) -> Result<Manifest> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root) {
+        let entry = entry?;            // propagate traversal errors instead of swallowing
         if !entry.file_type().is_file() {
             continue;
         }
