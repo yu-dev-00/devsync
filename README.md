@@ -15,15 +15,15 @@ devsync test
 
 See `devsync.toml.example` for configuration and `docs/manual-test.md` for the Windows OpenSSH E2E checklist.
 
-## `sync --delete` and remote-only files
+## `sync --delete` and excludes
 
 `devsync sync --delete` deletes any file under `remote_dir` that is not part of the
-local manifest. In this version the remote agent enumerates `remote_dir` **without
-applying your `[sync].exclude` patterns** — only the forced excludes
-(`devsync.toml`, `.git/`, `.devsync/`) are protected remotely.
+local manifest. Your `[sync].exclude` patterns are applied on **both** sides: the
+local upload scan and the remote agent's manifest. Excluded paths such as `bin`,
+`obj`, `build`, `dist`, and `artifacts` are therefore invisible to the diff on the
+remote side too, so `--delete` will **not** remove them — build outputs produced on
+the remote machine are preserved.
 
-Because excluded paths such as `bin`, `obj`, `build`, `dist`, and `artifacts` are
-not uploaded, they appear "remote-only" and **`--delete` will remove them**, including
-build outputs produced on the remote machine. Plain `devsync sync` (without `--delete`)
-never deletes anything and is safe. Prefer it unless you specifically want the remote
-copy to mirror the local file set exactly.
+Forced excludes (`devsync.toml`, `.git/`, `.devsync/`) are always protected. Plain
+`devsync sync` (without `--delete`) never deletes anything; use `--delete` when you
+want the remote copy to mirror the local, non-excluded file set exactly.
