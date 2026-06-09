@@ -1,8 +1,23 @@
 use crate::{config::Config, protocol::{self, Message}};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+/// Perform the protocol handshake: send our Hello, then require the peer to
+/// reply with a Hello at the same protocol version. Returns Err if the peer
+/// reports an error or a different version.
+pub fn perform_handshake<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<()> {
+    protocol::write_message(writer, &Message::Hello { version: protocol::PROTOCOL_VERSION })?;
+    match protocol::read_message(reader)? {
+        Message::Hello { version } if version == protocol::PROTOCOL_VERSION => Ok(()),
+        Message::Hello { version } => {
+            anyhow::bail!("remote agent protocol version {version} != local {}", protocol::PROTOCOL_VERSION)
+        }
+        Message::Error { message } => anyhow::bail!(message),
+        other => anyhow::bail!("unexpected handshake response: {other:?}"),
+    }
+}
 
 pub struct RemoteClient {
     child: Child,
@@ -33,6 +48,7 @@ impl RemoteClient {
             reader: BufReader::new(stdout),
             writer: BufWriter::new(stdin),
         };
+        perform_handshake(&mut client.reader, &mut client.writer)?;
         client.send_config(config)?;
         Ok(client)
     }
