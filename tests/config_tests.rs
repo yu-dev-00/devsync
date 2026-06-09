@@ -1,7 +1,6 @@
 use std::fs;
 
-#[path = "../src/config.rs"]
-mod config;
+use devsync::config;
 
 #[test]
 fn loads_defaults_and_required_fields() {

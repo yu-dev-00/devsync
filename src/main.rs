@@ -1,14 +1,5 @@
-mod agent;
-mod client;
-mod config;
-mod diff;
-mod exclude;
-mod manifest;
-mod path_safety;
-mod protocol;
-mod sync;
-
 use anyhow::Result;
+use devsync::{agent, config, sync};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
