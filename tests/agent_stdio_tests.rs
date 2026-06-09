@@ -3,6 +3,39 @@ use std::io::Cursor;
 
 use devsync::{agent, protocol};
 
+#[test]
+fn agent_accepts_matching_protocol_version() {
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::Hello { version: devsync::protocol::PROTOCOL_VERSION },
+    )
+    .unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(std::io::Cursor::new(input), &mut output).unwrap();
+
+    let response = protocol::read_message(&mut std::io::Cursor::new(output)).unwrap();
+    assert_eq!(response, protocol::Message::Hello { version: devsync::protocol::PROTOCOL_VERSION });
+}
+
+#[test]
+fn agent_rejects_mismatched_protocol_version() {
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Hello { version: 999 }).unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(std::io::Cursor::new(input), &mut output).unwrap();
+
+    let response = protocol::read_message(&mut std::io::Cursor::new(output)).unwrap();
+    match response {
+        protocol::Message::Error { message } => {
+            assert!(message.contains("version"), "expected a version error, got: {message}");
+        }
+        other => panic!("expected Error for version mismatch, got {other:?}"),
+    }
+}
+
 // Step 1: failing test – agent_writes_file_payload_under_remote_dir
 #[test]
 fn agent_writes_file_payload_under_remote_dir() {

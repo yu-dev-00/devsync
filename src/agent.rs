@@ -44,7 +44,19 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 protocol::write_message(&mut writer, &manifest.into())?;
             }
             Message::Hello { version } => {
-                protocol::write_message(&mut writer, &Message::Hello { version })?;
+                if version == protocol::PROTOCOL_VERSION {
+                    protocol::write_message(&mut writer, &Message::Hello { version: protocol::PROTOCOL_VERSION })?;
+                } else {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error {
+                            message: format!(
+                                "unsupported protocol version: {version} (agent supports {})",
+                                protocol::PROTOCOL_VERSION
+                            ),
+                        },
+                    )?;
+                }
             }
             Message::File { path, size, hash } => {
                 // Always consume the raw payload bytes first to keep the stream aligned,
