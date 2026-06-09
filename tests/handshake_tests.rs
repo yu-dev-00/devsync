@@ -32,8 +32,8 @@ fn perform_handshake_fails_on_version_mismatch() {
     let mut reader = Cursor::new(agent_reply);
     let mut writer: Vec<u8> = Vec::new();
 
-    let result = devsync::client::perform_handshake(&mut reader, &mut writer);
-    assert!(result.is_err(), "mismatched version must fail the handshake");
+    let err = devsync::client::perform_handshake(&mut reader, &mut writer).unwrap_err().to_string();
+    assert!(err.contains("version"), "error should mention version, got: {err}");
 }
 
 #[test]
@@ -50,6 +50,23 @@ fn perform_handshake_fails_on_error_reply() {
     let mut reader = Cursor::new(agent_reply);
     let mut writer: Vec<u8> = Vec::new();
 
+    let err = devsync::client::perform_handshake(&mut reader, &mut writer).unwrap_err().to_string();
+    assert!(err.contains("unsupported protocol version"), "error should forward the agent message, got: {err}");
+}
+
+#[test]
+fn perform_handshake_fails_on_unexpected_reply() {
+    // Agent replies with something that isn't a Hello/Error — handshake must fail.
+    let mut agent_reply = Vec::new();
+    devsync::protocol::write_message(
+        &mut agent_reply,
+        &devsync::protocol::Message::ManifestRequest,
+    )
+    .unwrap();
+
+    let mut reader = Cursor::new(agent_reply);
+    let mut writer: Vec<u8> = Vec::new();
+
     let result = devsync::client::perform_handshake(&mut reader, &mut writer);
-    assert!(result.is_err(), "an Error reply must fail the handshake");
+    assert!(result.is_err(), "an unexpected reply must fail the handshake");
 }

@@ -18,6 +18,12 @@ pub fn run_stdio_agent() -> Result<()> {
 }
 
 pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> {
+    // NOTE: the agent validates the Hello version when one is sent, but does not
+    // *require* a Hello before operational messages. Cross-version safety still
+    // holds in practice: an incompatible client's Config fails to deserialize
+    // (the frame read errors and the loop ends), and the real client always
+    // handshakes first and bails on mismatch. Enforcing handshake-first on the
+    // agent (rejecting any pre-handshake operational message) is a v2 follow-up.
     let mut config: Option<AgentConfig> = None;
 
     loop {
@@ -56,6 +62,8 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                             ),
                         },
                     )?;
+                    // Peer speaks an incompatible protocol version; stop serving this connection.
+                    break;
                 }
             }
             Message::File { path, size, hash } => {
