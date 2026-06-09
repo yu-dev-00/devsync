@@ -59,9 +59,10 @@ fn diff_identifies_uploads_deletes_and_skips() {
 }
 
 #[test]
-fn build_manifest_errors_on_unreadable_root() {
-    // A non-existent root makes WalkDir yield an error on first iteration;
-    // build_manifest must surface it as Err, not silently return an empty manifest.
+fn build_manifest_errors_on_missing_root() {
+    // A non-existent root makes WalkDir yield an error (ENOENT) on first
+    // iteration; build_manifest must surface it as Err, not silently return an
+    // empty manifest. Permission errors (EACCES) propagate via the same path.
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("does-not-exist");
 
