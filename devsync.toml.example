@@ -14,11 +14,10 @@ run = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1"
 test = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\test.ps1"
 
 [sync]
-# Excludes apply to the local upload scan. NOTE: with `devsync sync --delete`,
-# excluded paths (e.g. bin, obj, build, dist, artifacts) are treated as
-# remote-only and will be DELETED from remote_dir. Use plain `devsync sync` to
-# avoid deleting remote build outputs. Forced excludes (devsync.toml, .git,
-# .devsync) are always protected.
+# Excludes apply to BOTH the local upload scan and the remote agent's manifest,
+# so excluded paths (e.g. bin, obj, build, dist, artifacts) are never uploaded
+# and are never deleted by `devsync sync --delete`. Forced excludes
+# (devsync.toml, .git, .devsync) are always protected.
 exclude = [
   ".git",
   ".devsync",
