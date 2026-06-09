@@ -2,11 +2,11 @@ use std::io::Cursor;
 
 #[test]
 fn perform_handshake_succeeds_on_matching_version() {
-    // Pre-fill the reader with the agent's Hello reply.
+    // Pre-fill the reader with the agent's HelloAck reply.
     let mut agent_reply = Vec::new();
     devsync::protocol::write_message(
         &mut agent_reply,
-        &devsync::protocol::Message::Hello { version: devsync::protocol::PROTOCOL_VERSION },
+        &devsync::protocol::Message::HelloAck { agent_version: devsync::protocol::PROTOCOL_VERSION },
     )
     .unwrap();
 
@@ -25,7 +25,7 @@ fn perform_handshake_fails_on_version_mismatch() {
     let mut agent_reply = Vec::new();
     devsync::protocol::write_message(
         &mut agent_reply,
-        &devsync::protocol::Message::Hello { version: 999 },
+        &devsync::protocol::Message::HelloAck { agent_version: 999 },
     )
     .unwrap();
 
@@ -69,4 +69,23 @@ fn perform_handshake_fails_on_unexpected_reply() {
 
     let result = devsync::client::perform_handshake(&mut reader, &mut writer);
     assert!(result.is_err(), "an unexpected reply must fail the handshake");
+}
+
+#[test]
+fn perform_handshake_rejects_plain_hello_echo_from_old_agent() {
+    // An old echo-only agent replies to our Hello by echoing Hello{version}
+    // rather than sending HelloAck. The handshake MUST reject it so we never
+    // proceed to send a v2 Config that the old agent would silently misread.
+    let mut agent_reply = Vec::new();
+    devsync::protocol::write_message(
+        &mut agent_reply,
+        &devsync::protocol::Message::Hello { version: devsync::protocol::PROTOCOL_VERSION },
+    )
+    .unwrap();
+
+    let mut reader = Cursor::new(agent_reply);
+    let mut writer: Vec<u8> = Vec::new();
+
+    let result = devsync::client::perform_handshake(&mut reader, &mut writer);
+    assert!(result.is_err(), "a plain Hello echo (old agent) must fail the handshake");
 }

@@ -5,17 +5,23 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 /// Perform the protocol handshake: send our Hello, then require the peer to
-/// reply with a Hello at the same protocol version. Returns Err if the peer
-/// reports an error or a different version.
+/// reply with a HelloAck carrying the same protocol version. A plain Hello
+/// reply (which an older echo-only agent would produce) is rejected, as is an
+/// Error or any other message.
 pub fn perform_handshake<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<()> {
     protocol::write_message(writer, &Message::Hello { version: protocol::PROTOCOL_VERSION })?;
     match protocol::read_message(reader)? {
-        Message::Hello { version } if version == protocol::PROTOCOL_VERSION => Ok(()),
-        Message::Hello { version } => {
-            anyhow::bail!("remote agent protocol version {version} != local {}", protocol::PROTOCOL_VERSION)
+        Message::HelloAck { agent_version } if agent_version == protocol::PROTOCOL_VERSION => Ok(()),
+        Message::HelloAck { agent_version } => {
+            anyhow::bail!(
+                "remote agent protocol version {agent_version} != local {}",
+                protocol::PROTOCOL_VERSION
+            )
         }
         Message::Error { message } => anyhow::bail!(message),
-        other => anyhow::bail!("unexpected handshake response: {other:?}"),
+        other => anyhow::bail!(
+            "unexpected handshake response (remote agent may be an incompatible older version): {other:?}"
+        ),
     }
 }
 

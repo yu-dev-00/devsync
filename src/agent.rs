@@ -51,7 +51,10 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
             }
             Message::Hello { version } => {
                 if version == protocol::PROTOCOL_VERSION {
-                    protocol::write_message(&mut writer, &Message::Hello { version: protocol::PROTOCOL_VERSION })?;
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::HelloAck { agent_version: protocol::PROTOCOL_VERSION },
+                    )?;
                 } else {
                     protocol::write_message(
                         &mut writer,

@@ -16,7 +16,7 @@ fn agent_accepts_matching_protocol_version() {
     agent::run_agent(std::io::Cursor::new(input), &mut output).unwrap();
 
     let response = protocol::read_message(&mut std::io::Cursor::new(output)).unwrap();
-    assert_eq!(response, protocol::Message::Hello { version: devsync::protocol::PROTOCOL_VERSION });
+    assert_eq!(response, protocol::Message::HelloAck { agent_version: devsync::protocol::PROTOCOL_VERSION });
 }
 
 #[test]
