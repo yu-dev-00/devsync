@@ -57,3 +57,16 @@ fn diff_identifies_uploads_deletes_and_skips() {
     assert_eq!(plan.delete, vec!["c.txt"]);
     assert_eq!(plan.skipped, 0);
 }
+
+#[test]
+fn build_manifest_errors_on_unreadable_root() {
+    // A non-existent root makes WalkDir yield an error on first iteration;
+    // build_manifest must surface it as Err, not silently return an empty manifest.
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("does-not-exist");
+
+    let matcher = exclude::ExcludeMatcher::new(vec![]).unwrap();
+    let result = manifest::build_manifest(&missing, &matcher);
+
+    assert!(result.is_err(), "expected build_manifest to error on an unreadable/missing root");
+}
