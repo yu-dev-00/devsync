@@ -56,7 +56,7 @@ fn perform_handshake_fails_on_error_reply() {
 
 #[test]
 fn perform_handshake_fails_on_unexpected_reply() {
-    // Agent replies with something that isn't a Hello/Error — handshake must fail.
+    // Agent replies with something that isn't a HelloAck/Error — handshake must fail.
     let mut agent_reply = Vec::new();
     devsync::protocol::write_message(
         &mut agent_reply,
@@ -86,6 +86,9 @@ fn perform_handshake_rejects_plain_hello_echo_from_old_agent() {
     let mut reader = Cursor::new(agent_reply);
     let mut writer: Vec<u8> = Vec::new();
 
-    let result = devsync::client::perform_handshake(&mut reader, &mut writer);
-    assert!(result.is_err(), "a plain Hello echo (old agent) must fail the handshake");
+    let err = devsync::client::perform_handshake(&mut reader, &mut writer).unwrap_err().to_string();
+    assert!(
+        err.contains("older version"),
+        "error should hint at an incompatible older agent, got: {err}"
+    );
 }
