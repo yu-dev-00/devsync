@@ -1,13 +1,6 @@
 use std::fs;
 
-#[path = "../src/path_safety.rs"]
-mod path_safety;
-#[path = "../src/exclude.rs"]
-mod exclude;
-#[path = "../src/manifest.rs"]
-mod manifest;
-#[path = "../src/diff.rs"]
-mod diff;
+use devsync::{diff, exclude, manifest, path_safety};
 
 #[test]
 fn rejects_unsafe_relative_paths() {

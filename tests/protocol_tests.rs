@@ -1,15 +1,6 @@
 use std::io::Cursor;
 
-#[path = "../src/manifest.rs"]
-mod manifest;
-#[path = "../src/path_safety.rs"]
-mod path_safety;
-#[path = "../src/exclude.rs"]
-mod exclude;
-#[path = "../src/diff.rs"]
-mod diff;
-#[path = "../src/protocol.rs"]
-mod protocol;
+use devsync::protocol;
 
 #[test]
 fn round_trips_json_frame() {

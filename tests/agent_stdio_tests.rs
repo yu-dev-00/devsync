@@ -1,18 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-#[path = "../src/path_safety.rs"]
-mod path_safety;
-#[path = "../src/exclude.rs"]
-mod exclude;
-#[path = "../src/manifest.rs"]
-mod manifest;
-#[path = "../src/diff.rs"]
-mod diff;
-#[path = "../src/protocol.rs"]
-mod protocol;
-#[path = "../src/agent.rs"]
-mod agent;
+use devsync::{agent, protocol};
 
 // Step 1: failing test – agent_writes_file_payload_under_remote_dir
 #[test]
