@@ -8,6 +8,7 @@ use std::path::PathBuf;
 struct AgentConfig {
     remote_dir: PathBuf,
     commands: BTreeMap<String, String>,
+    exclude: Vec<String>,
 }
 
 pub fn run_stdio_agent() -> Result<()> {
@@ -26,8 +27,8 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
         };
 
         match message {
-            Message::Config { remote_dir, commands } => {
-                config = Some(AgentConfig { remote_dir: PathBuf::from(remote_dir), commands });
+            Message::Config { remote_dir, commands, exclude } => {
+                config = Some(AgentConfig { remote_dir: PathBuf::from(remote_dir), commands, exclude });
             }
             Message::ManifestRequest => {
                 let Some(config) = &config else {
@@ -38,7 +39,7 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     continue;
                 };
                 std::fs::create_dir_all(&config.remote_dir)?;
-                let matcher = ExcludeMatcher::new(Vec::new())?;
+                let matcher = ExcludeMatcher::new(config.exclude.clone())?;
                 let manifest = manifest::build_manifest(&config.remote_dir, &matcher)?;
                 protocol::write_message(&mut writer, &manifest.into())?;
             }
