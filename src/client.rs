@@ -51,6 +51,7 @@ impl RemoteClient {
         self.write(&Message::Config {
             remote_dir: config.paths.remote_dir.clone(),
             commands,
+            exclude: config.sync.exclude.clone(),
         })
     }
 

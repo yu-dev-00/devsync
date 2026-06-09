@@ -13,6 +13,7 @@ fn agent_writes_file_payload_under_remote_dir() {
         &protocol::Message::Config {
             remote_dir: dir.path().to_string_lossy().to_string(),
             commands: BTreeMap::new(),
+            exclude: vec![],
         },
     )
     .unwrap();
@@ -96,6 +97,7 @@ fn agent_accepts_config_and_returns_manifest() {
         &protocol::Message::Config {
             remote_dir: dir.path().to_string_lossy().to_string(),
             commands,
+            exclude: vec![],
         },
     )
     .unwrap();
@@ -123,6 +125,7 @@ fn agent_rejects_unsafe_file_path_without_terminating() {
         &protocol::Message::Config {
             remote_dir: dir.path().to_string_lossy().to_string(),
             commands: BTreeMap::new(),
+            exclude: vec![],
         },
     )
     .unwrap();
@@ -161,6 +164,7 @@ fn agent_rejects_unknown_exec_name() {
         &protocol::Message::Config {
             remote_dir: dir.path().to_string_lossy().to_string(),
             commands: BTreeMap::new(),
+            exclude: vec![],
         },
     )
     .unwrap();
@@ -189,4 +193,38 @@ fn agent_rejects_exec_before_config() {
         response,
         protocol::Message::Error { message: "agent config has not been received".into() }
     );
+}
+
+#[test]
+fn agent_applies_configured_excludes_to_remote_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    // A normal source file (should appear) and an excluded build-artifact dir (should NOT).
+    std::fs::create_dir_all(dir.path().join("build")).unwrap();
+    std::fs::write(dir.path().join("build").join("out.bin"), "artifact").unwrap();
+    std::fs::write(dir.path().join("keep.txt"), "src").unwrap();
+
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands: std::collections::BTreeMap::new(),
+            exclude: vec!["build".to_string()],
+        },
+    )
+    .unwrap();
+    protocol::write_message(&mut input, &protocol::Message::ManifestRequest).unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(std::io::Cursor::new(input), &mut output).unwrap();
+
+    let response = protocol::read_message(&mut std::io::Cursor::new(output)).unwrap();
+    match response {
+        protocol::Message::Manifest { files } => {
+            let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+            assert!(paths.contains(&"keep.txt"), "keep.txt should be in manifest, got {paths:?}");
+            assert!(!paths.iter().any(|p| p.starts_with("build/")), "build/ artifacts must be excluded, got {paths:?}");
+        }
+        other => panic!("unexpected response: {other:?}"),
+    }
 }
