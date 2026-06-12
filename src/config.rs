@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -12,7 +13,7 @@ pub struct Config {
     #[serde(default)]
     pub paths: PathConfig,
     #[serde(default)]
-    pub commands: CommandConfig,
+    pub commands: BTreeMap<String, String>,
     #[serde(default)]
     pub sync: SyncConfig,
 }
@@ -55,13 +56,6 @@ impl Default for PathConfig {
             remote_dir: String::new(),
         }
     }
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct CommandConfig {
-    pub build: Option<String>,
-    pub run: Option<String>,
-    pub test: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -108,12 +102,9 @@ impl Config {
     }
 
     pub fn command(&self, name: &str) -> Result<&str> {
-        let value = match name {
-            "build" => self.commands.build.as_deref(),
-            "run" => self.commands.run.as_deref(),
-            "test" => self.commands.test.as_deref(),
-            other => bail!("unknown command name: {other}"),
-        };
-        value.ok_or_else(|| anyhow::anyhow!("commands.{name} is not defined"))
+        self.commands
+            .get(name)
+            .map(String::as_str)
+            .ok_or_else(|| anyhow::anyhow!("commands.{name} is not defined"))
     }
 }

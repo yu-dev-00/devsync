@@ -118,7 +118,11 @@ pub fn exec(config: &Config, name: &str) -> Result<i32> {
     }
 }
 
-pub fn sync_then_exec(config: &Config, name: &str) -> Result<i32> {
-    sync(config, false)?;
+/// Execute a named remote command, synchronizing first unless `no_sync`.
+pub fn run_command(config: &Config, name: &str, no_sync: bool) -> Result<i32> {
+    config.command(name)?; // validate locally before any connection
+    if !no_sync {
+        sync(config, false)?;
+    }
     exec(config, name)
 }

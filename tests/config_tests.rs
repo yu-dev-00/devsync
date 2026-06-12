@@ -54,9 +54,39 @@ fn command_is_required_only_when_requested() {
             local_dir: ".".into(),
             remote_dir: r"C:\work\project".to_string(),
         },
-        commands: config::CommandConfig::default(),
+        commands: std::collections::BTreeMap::new(),
         sync: config::SyncConfig::default(),
     };
 
     assert!(cfg.command("build").unwrap_err().to_string().contains("commands.build"));
+}
+
+#[test]
+fn arbitrary_command_names_load_from_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("devsync.toml");
+    fs::write(
+        &config_path,
+        r#"
+[connection]
+host = "remote-pc"
+user = "alice"
+
+[paths]
+remote_dir = "C:\\work\\project"
+
+[commands]
+lint = "echo lint-ok"
+build = "echo build"
+"#,
+    )
+    .unwrap();
+
+    let cfg = config::Config::load(&config_path).unwrap();
+
+    assert_eq!(cfg.command("lint").unwrap(), "echo lint-ok");
+    assert_eq!(cfg.command("build").unwrap(), "echo build");
+
+    let err = cfg.command("missing").unwrap_err().to_string();
+    assert!(err.contains("commands.missing"), "error was: {err}");
 }

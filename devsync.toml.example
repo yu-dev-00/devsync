@@ -8,10 +8,15 @@ agent_path = "C:\\tools\\devsync.exe"
 local_dir = "."
 remote_dir = "C:\\work\\project"
 
+# [commands] accepts arbitrary names — use any key you like.
+# Run with: devsync exec <name>  (e.g. devsync exec lint)
+# The built-in aliases `devsync build`, `devsync run`, and `devsync test`
+# correspond to the keys "build", "run", and "test" respectively.
 [commands]
 build = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
 run = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1"
 test = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\test.ps1"
+lint = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\lint.ps1"
 
 [sync]
 # Excludes apply to BOTH the local upload scan and the remote agent's manifest,

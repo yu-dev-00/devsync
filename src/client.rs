@@ -1,6 +1,5 @@
 use crate::{config::Config, protocol::{self, Message}};
 use anyhow::{Context, Result};
-use std::collections::BTreeMap;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -60,19 +59,9 @@ impl RemoteClient {
     }
 
     fn send_config(&mut self, config: &Config) -> Result<()> {
-        let mut commands = BTreeMap::new();
-        if let Some(value) = &config.commands.build {
-            commands.insert("build".to_string(), value.clone());
-        }
-        if let Some(value) = &config.commands.run {
-            commands.insert("run".to_string(), value.clone());
-        }
-        if let Some(value) = &config.commands.test {
-            commands.insert("test".to_string(), value.clone());
-        }
         self.write(&Message::Config {
             remote_dir: config.paths.remote_dir.clone(),
-            commands,
+            commands: config.commands.clone(),
             exclude: config.sync.exclude.clone(),
         })
     }

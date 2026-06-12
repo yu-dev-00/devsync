@@ -37,3 +37,5 @@ Use `devsync.toml.example` as the starting config.
 12. Confirm run output streams locally.
 13. Run `devsync test`.
 14. Confirm test output streams locally.
+15. Run `devsync exec <name>` for a custom command and confirm it syncs then executes.
+16. Run `devsync run --no-sync` and confirm it executes without syncing.

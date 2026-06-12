@@ -213,7 +213,58 @@ fn e2e_unknown_exec_name_returns_error() {
     child.wait().ok();
 }
 
-// ── test 4 ─────────────────────────────────────────────────────────────────
+// ── test 4 (arbitrary name) ────────────────────────────────────────────────
+
+#[test]
+fn e2e_exec_arbitrary_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+
+    devsync::client::perform_handshake(&mut stdout, &mut stdin).expect("handshake");
+
+    let mut commands = BTreeMap::new();
+    commands.insert("lint".to_string(), "Write-Output lint-ok".to_string());
+    protocol::write_message(
+        &mut stdin,
+        &Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands,
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+
+    protocol::write_message(&mut stdin, &Message::Exec { name: "lint".into() }).unwrap();
+
+    // Collect Output frames until Exit.
+    let mut stdout_data = String::new();
+    let exit_code;
+    loop {
+        let msg = protocol::read_message(&mut stdout).unwrap();
+        match msg {
+            Message::Output { stream, data } if stream == "stdout" => {
+                stdout_data.push_str(&data);
+            }
+            Message::Output { .. } => {} // stderr — ignore
+            Message::Exit { code } => {
+                exit_code = code;
+                break;
+            }
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    }
+
+    assert!(
+        stdout_data.contains("lint-ok"),
+        "stdout output must contain 'lint-ok'; got: {stdout_data:?}"
+    );
+    assert_eq!(exit_code, 0, "PowerShell command must exit with code 0");
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+// ── test 5 ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn e2e_version_mismatch_is_rejected() {
