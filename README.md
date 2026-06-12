@@ -17,6 +17,13 @@ devsync test                 # alias for: devsync exec test
 
 `build`, `run`, and `test` are convenience aliases for `exec <name>`. All execution commands (`exec`, `build`, `run`, `test`) sync first by default. Pass `--no-sync` to skip the sync step and execute against the current remote copy.
 
+> **Breaking change:** `devsync run` previously executed without syncing. It now
+> syncs first like every other execution command; use `devsync run --no-sync`
+> for the old behavior.
+
+Command names in `[commands]` are arbitrary. A name that matches a devsync
+subcommand is fine: `devsync exec sync` runs `commands.sync`, not `devsync sync`.
+
 See `devsync.toml.example` for configuration and `docs/manual-test.md` for the Windows OpenSSH E2E checklist.
 
 ## `sync --delete` and excludes

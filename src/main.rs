@@ -23,8 +23,11 @@ enum Command {
     Sync(SyncArgs),
     /// Execute a named command from [commands], syncing first by default
     Exec(ExecArgs),
+    /// Alias for `exec build`; syncs first by default
     Build(RunFlags),
+    /// Alias for `exec run`; syncs first by default
     Run(RunFlags),
+    /// Alias for `exec test`; syncs first by default
     Test(RunFlags),
     Agent(AgentArgs),
 }
