@@ -67,22 +67,29 @@ devsync sync --delete
 Synchronize local files and delete remote-only files that are not excluded. Delete is explicit to avoid accidental data loss.
 
 ```text
-devsync build
+devsync exec <name>
 ```
 
-Run `sync`, then ask the remote agent to execute `commands.build`.
+Run `sync`, then ask the remote agent to execute the command registered as
+`commands.<name>` in `devsync.toml`. Any configured name can be executed;
+only configured names can be executed.
 
 ```text
+devsync build
+devsync run
 devsync test
 ```
 
-Run `sync`, then ask the remote agent to execute `commands.test`.
+Aliases for `devsync exec build`, `devsync exec run`, and `devsync exec test`.
+They behave identically to `exec`, including the sync-first default.
+
+Every execution command (`exec`, `build`, `run`, `test`) synchronizes first by
+default, because the remote copy exists to run the latest local code. Running
+stale remote code is the exception and must be requested explicitly:
 
 ```text
-devsync run
+--no-sync    Skip the sync step and execute against the current remote copy.
 ```
-
-Ask the remote agent to execute `commands.run` without syncing first.
 
 Initial global options:
 
@@ -95,8 +102,10 @@ Deferred commands and options:
 
 - `logs`
 - `clean`
-- `shell`
-- `run --sync`
+- `shell` (deliberately excluded: arbitrary remote execution would break the
+  named-command-only security model; register commands in `devsync.toml` instead)
+- `watch` / `dev` auto-sync loop (requires a long-lived connection; revisit
+  after the initial scope is proven)
 - daemon or TCP server mode
 - checksum mode flag, because the initial diff model always uses content hashes
 
@@ -125,6 +134,7 @@ remote_dir = "C:\\work\\project"
 build = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
 run = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1"
 test = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\test.ps1"
+lint = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\lint.ps1"
 
 [sync]
 exclude = [
@@ -156,7 +166,10 @@ Defaults:
 - `paths.local_dir = "."`
 - `sync.exclude = []`
 
-Command fields are required only when their command is invoked. For example, `commands.build` is required for `devsync build`, but not for `devsync status`.
+`[commands]` is a map of arbitrary command names to command strings. A command
+entry is required only when that name is invoked. For example, `commands.build`
+is required for `devsync build` (alias of `devsync exec build`), but not for
+`devsync status`. `devsync exec lint` requires `commands.lint`.
 
 Forced excludes are always applied, even if the user omits them:
 
@@ -272,7 +285,7 @@ The CLI should report actionable errors for:
 - Remote agent exits before protocol handshake.
 - Protocol version mismatch.
 - `devsync.toml` parse or validation failure.
-- Missing `commands.build`, `commands.run`, or `commands.test` when invoked.
+- Missing `commands.<name>` when that name is invoked.
 - `remote_dir` creation, scan, write, or delete failure.
 - Rejected unsafe paths.
 - Transfer interruption.
@@ -333,7 +346,7 @@ In scope:
 - Remote `agent --stdio`.
 - Hash-based manifest diff.
 - One-way local-to-remote sync.
-- `status`, `sync`, `sync --delete`, `build`, `run`, `test`.
+- `status`, `sync`, `sync --delete`, `exec <name>`, `build`, `run`, `test`, `--no-sync`.
 - PowerShell command examples.
 
 Out of scope:
