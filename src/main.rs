@@ -21,9 +21,11 @@ struct Cli {
 enum Command {
     Status,
     Sync(SyncArgs),
-    Build,
-    Run,
-    Test,
+    /// Execute a named command from [commands], syncing first by default
+    Exec(ExecArgs),
+    Build(RunFlags),
+    Run(RunFlags),
+    Test(RunFlags),
     Agent(AgentArgs),
 }
 
@@ -31,6 +33,21 @@ enum Command {
 struct SyncArgs {
     #[arg(long)]
     delete: bool,
+}
+
+#[derive(Debug, Args)]
+struct ExecArgs {
+    /// Name of the command in [commands] to execute
+    name: String,
+    #[command(flatten)]
+    flags: RunFlags,
+}
+
+#[derive(Debug, Args)]
+struct RunFlags {
+    /// Skip the sync step and execute against the current remote copy
+    #[arg(long)]
+    no_sync: bool,
 }
 
 #[derive(Debug, Args)]
@@ -60,19 +77,24 @@ fn main() -> Result<()> {
         // (RemoteClient::Drop). That is safe here — exec() returns only after the
         // remote Exit frame is received, so the protocol exchange is already complete;
         // the OS reaps the ssh subprocess on process exit.
-        Command::Build => {
+        Command::Exec(args) => {
             let cfg = cfg.as_ref().expect("config loaded for local commands");
-            let code = sync::sync_then_exec(cfg, "build")?;
+            let code = sync::run_command(cfg, &args.name, args.flags.no_sync)?;
             std::process::exit(code);
         }
-        Command::Run => {
+        Command::Build(flags) => {
             let cfg = cfg.as_ref().expect("config loaded for local commands");
-            let code = sync::exec(cfg, "run")?;
+            let code = sync::run_command(cfg, "build", flags.no_sync)?;
             std::process::exit(code);
         }
-        Command::Test => {
+        Command::Run(flags) => {
             let cfg = cfg.as_ref().expect("config loaded for local commands");
-            let code = sync::sync_then_exec(cfg, "test")?;
+            let code = sync::run_command(cfg, "run", flags.no_sync)?;
+            std::process::exit(code);
+        }
+        Command::Test(flags) => {
+            let cfg = cfg.as_ref().expect("config loaded for local commands");
+            let code = sync::run_command(cfg, "test", flags.no_sync)?;
             std::process::exit(code);
         }
         Command::Agent(args) => {

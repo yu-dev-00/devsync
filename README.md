@@ -8,10 +8,14 @@ Initial commands:
 devsync status
 devsync sync
 devsync sync --delete
-devsync build
-devsync run
-devsync test
+devsync exec <name>          # run any named command from [commands], syncing first
+devsync exec <name> --no-sync  # skip sync and execute against the current remote copy
+devsync build                # alias for: devsync exec build
+devsync run                  # alias for: devsync exec run
+devsync test                 # alias for: devsync exec test
 ```
+
+`build`, `run`, and `test` are convenience aliases for `exec <name>`. All execution commands (`exec`, `build`, `run`, `test`) sync first by default. Pass `--no-sync` to skip the sync step and execute against the current remote copy.
 
 See `devsync.toml.example` for configuration and `docs/manual-test.md` for the Windows OpenSSH E2E checklist.
 
