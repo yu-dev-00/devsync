@@ -33,37 +33,41 @@ fn pump_stream<R: std::io::Read>(
     }
 }
 
-/// Decode the longest valid UTF-8 prefix of `buffer`, removing what it consumed.
-/// A trailing incomplete sequence is left in place for the next chunk; bytes
-/// that can never be valid are replaced, matching `String::from_utf8_lossy`.
-fn take_decodable(buffer: &mut Vec<u8>) -> String {
-    let mut decoded = String::new();
-    loop {
-        match std::str::from_utf8(buffer) {
-            Ok(text) => {
-                decoded.push_str(text);
-                buffer.clear();
-                return decoded;
-            }
-            Err(error) => {
-                let valid_up_to = error.valid_up_to();
-                decoded.push_str(
-                    std::str::from_utf8(&buffer[..valid_up_to]).expect("prefix is valid utf-8"),
-                );
-                match error.error_len() {
-                    Some(invalid_len) => {
-                        decoded.push('\u{FFFD}');
-                        buffer.drain(..valid_up_to + invalid_len);
-                    }
-                    // Truncated at the chunk boundary — keep it for the next read.
-                    None => {
-                        buffer.drain(..valid_up_to);
-                        return decoded;
-                    }
-                }
-            }
+/// The encoding console programs write in on this machine. Windows PowerShell
+/// encodes redirected stdout with the console output code page — CP932 on a
+/// Japanese install, not UTF-8 — so decoding as UTF-8 turns every non-ASCII
+/// character into U+FFFD, irreversibly.
+#[cfg(windows)]
+fn console_encoding() -> &'static encoding_rs::Encoding {
+    // The agent runs under sshd with no console attached, where
+    // GetConsoleOutputCP returns 0; the OEM code page is what console programs
+    // fall back to for redirected output.
+    let code_page = unsafe {
+        match windows_sys::Win32::System::Console::GetConsoleOutputCP() {
+            0 => windows_sys::Win32::Globalization::GetOEMCP(),
+            attached => attached,
         }
-    }
+    };
+    u16::try_from(code_page)
+        .ok()
+        .and_then(codepage::to_encoding)
+        .unwrap_or(encoding_rs::UTF_8)
+}
+
+#[cfg(not(windows))]
+fn console_encoding() -> &'static encoding_rs::Encoding {
+    encoding_rs::UTF_8
+}
+
+/// Decode one chunk, carrying any sequence split across the chunk boundary in
+/// the decoder's own state. Pass `last` at EOF to flush a truncated tail.
+fn decode_chunk(decoder: &mut encoding_rs::Decoder, bytes: &[u8], last: bool) -> String {
+    let mut decoded = String::with_capacity(
+        decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len().saturating_mul(4)),
+    );
+    // Capacity is sized for the whole input, so this consumes it in one call.
+    let (_result, _read, _had_errors) = decoder.decode_to_string(bytes, &mut decoded, last);
+    decoded
 }
 
 pub fn run_stdio_agent() -> Result<()> {
@@ -233,16 +237,20 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 };
                 let stderr_pump = std::thread::spawn(move || pump_stream("stderr", child_stderr, sender));
 
-                // Chunk boundaries fall at arbitrary byte offsets, so a multi-byte UTF-8
-                // sequence can straddle two reads. Buffer per stream and only decode the
-                // complete prefix, or streaming would corrupt characters that the old
-                // decode-everything-at-once path got right.
-                let mut stdout_buf: Vec<u8> = Vec::new();
-                let mut stderr_buf: Vec<u8> = Vec::new();
+                // Chunk boundaries fall at arbitrary byte offsets, so a multi-byte
+                // sequence can straddle two reads. Each stream keeps its own decoder,
+                // which holds the partial sequence until the next chunk completes it.
+                let encoding = console_encoding();
+                let mut stdout_decoder = encoding.new_decoder();
+                let mut stderr_decoder = encoding.new_decoder();
+
                 for (stream, chunk) in receiver {
-                    let buffer = if stream == "stderr" { &mut stderr_buf } else { &mut stdout_buf };
-                    buffer.extend_from_slice(&chunk);
-                    let data = take_decodable(buffer);
+                    let decoder = if stream == "stderr" {
+                        &mut stderr_decoder
+                    } else {
+                        &mut stdout_decoder
+                    };
+                    let data = decode_chunk(decoder, &chunk, false);
                     if !data.is_empty() {
                         protocol::write_message(
                             &mut writer,
@@ -251,15 +259,16 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     }
                 }
 
-                // At EOF a leftover is a genuinely truncated sequence, not a boundary.
-                for (stream, buffer) in [("stdout", &stdout_buf), ("stderr", &stderr_buf)] {
-                    if !buffer.is_empty() {
+                // Flush each decoder: anything still held back is truncated rather than
+                // merely split, and must be reported instead of silently dropped.
+                for (stream, decoder) in
+                    [("stdout", &mut stdout_decoder), ("stderr", &mut stderr_decoder)]
+                {
+                    let data = decode_chunk(decoder, b"", true);
+                    if !data.is_empty() {
                         protocol::write_message(
                             &mut writer,
-                            &Message::Output {
-                                stream: stream.to_string(),
-                                data: String::from_utf8_lossy(buffer).to_string(),
-                            },
+                            &Message::Output { stream: stream.to_string(), data },
                         )?;
                     }
                 }

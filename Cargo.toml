@@ -7,11 +7,17 @@ edition = "2021"
 anyhow = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }
+codepage = "0.1"
+encoding_rs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 toml = "0.8"
 walkdir = "2"
+
+# Only needed to ask Windows which code page console programs write in.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Globalization", "Win32_System_Console"] }
 
 [dev-dependencies]
 assert_cmd = "2"
