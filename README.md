@@ -110,6 +110,30 @@ devsync test                 # alias for: devsync exec test
 
 `build`, `run`, and `test` are convenience aliases for `exec <name>`. All execution commands (`exec`, `build`, `run`, `test`) sync first by default. Pass `--no-sync` to skip the sync step and execute against the current remote copy.
 
+`--config <path>` selects a config other than `./devsync.toml`, and `-v` /
+`--verbose` prints progress and protocol diagnostics. Both work on either side
+of the subcommand, so `devsync build -v` is fine.
+
+## Diagnosing with `--verbose`
+
+Verbose output goes to **stderr**, tagged `[devsync]`, so it never mixes into a
+remote build log you piped somewhere:
+
+```text
+[devsync] local manifest: 10 file(s) in 5.1968ms from .
+[devsync] spawning: ssh -p 22 user@remote-pc "devsync.exe" agent --stdio
+[devsync] handshake: agent acknowledged version 3
+[devsync] plan: 1 upload, 0 delete, 9 skip
+[devsync] uploading src/hello.txt (21 bytes)
+[devsync] agent acked: wrote 1 file(s), deleted 0
+```
+
+Reach for the `spawning:` line first when a connection misbehaves — running that
+exact command by hand separates an ssh problem from a devsync one. The manifest
+timing tells a cold walk apart from one served by the hash cache, and the
+`uploading` lines show which files the diff actually picked, which is how you
+catch an exclude pattern that is too broad or too narrow.
+
 > **Breaking change:** `devsync run` previously executed without syncing. It now
 > syncs first like every other execution command; use `devsync run --no-sync`
 > for the old behavior.
