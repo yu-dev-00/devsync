@@ -1,4 +1,4 @@
-use crate::{exclude::ExcludeMatcher, path_safety};
+use crate::{exclude::ExcludeMatcher, hash_cache::{self, HashCache}, path_safety};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -17,6 +17,12 @@ pub struct ManifestEntry {
 }
 
 pub fn build_manifest(root: &Path, excludes: &ExcludeMatcher) -> Result<Manifest> {
+    // Reuse hashes for files this machine has already read and that have not
+    // changed since. The rebuilt cache is written from scratch below, so entries
+    // for deleted files disappear instead of accumulating forever.
+    let previous = HashCache::load(root);
+    let mut current = HashCache::new();
+
     let mut files = Vec::new();
     for entry in WalkDir::new(root) {
         let entry = entry?;            // propagate traversal errors instead of swallowing
@@ -28,13 +34,21 @@ pub fn build_manifest(root: &Path, excludes: &ExcludeMatcher) -> Result<Manifest
         if excludes.is_excluded(&normalized) {
             continue;
         }
-        let bytes = fs::read(entry.path())?;
-        files.push(ManifestEntry {
-            path: normalized,
-            size: bytes.len() as u64,
-            hash: blake3::hash(&bytes).to_hex().to_string(),
-        });
+
+        let metadata = entry.metadata()?;
+        let size = metadata.len();
+        let mtime_ns = hash_cache::modified_ns(&metadata);
+
+        let hash = match previous.reusable_hash(&normalized, size, mtime_ns) {
+            Some(cached) => cached.to_string(),
+            None => blake3::hash(&fs::read(entry.path())?).to_hex().to_string(),
+        };
+
+        current.record(normalized.clone(), size, mtime_ns, hash.clone());
+        files.push(ManifestEntry { path: normalized, size, hash });
     }
+
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    current.save(root);
     Ok(Manifest { files })
 }
