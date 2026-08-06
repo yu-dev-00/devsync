@@ -76,14 +76,25 @@ ssh <host> "where devsync.exe"
 reinstall the remote copy as well. The error names both versions when you
 forget.
 
-### 4. Configure the project
+### 4. Set up a project
 
-Copy `devsync.toml.example` to `devsync.toml` in your project root and set
-`connection.host`, `connection.user`, and `paths.remote_dir`.
+From the project root:
 
-`connection.agent_path` can be left out: it defaults to `devsync.exe`, which the
-remote resolves through `PATH`. Set it only if the agent lives somewhere off
-`PATH`. Then:
+```bash
+devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill
+```
+
+This writes `devsync.toml`, adds `.devsync/` to `.gitignore` when the directory
+is a git repository, and installs the Claude Code skill (see below). It refuses
+to overwrite an existing config unless you pass `--force`. The three connection
+flags are optional — omit them and edit the generated file instead.
+
+`connection.agent_path` is left out of the generated config on purpose: it
+defaults to `devsync.exe`, which the remote resolves through `PATH`. Set it only
+if the agent lives somewhere off `PATH`.
+
+Fill in `[commands]` with whatever this project needs building and running with,
+then:
 
 ```bash
 devsync status
@@ -92,12 +103,25 @@ devsync status
 This transfers nothing; it prints what a sync *would* upload and delete. Once it
 looks right, run `devsync sync`.
 
+### The Claude Code skill
+
+`--install-skill` writes a skill to `~/.claude/skills/devsync/`, which teaches
+Claude Code to route builds through devsync rather than ssh'ing to the remote
+and building there — which quietly compiles whatever was synced last.
+
+It installs once per user rather than per project, because it describes how
+devsync works, not what any one project does. A per-project copy would go stale
+as devsync changes and keep advising behavior that no longer exists. Re-run
+`devsync init --install-skill` (or install it alone in an already-configured
+project with `--force`) after upgrading to refresh it.
+
 `docs/manual-test.md` has a fuller checklist for verifying an installation,
 including the failure modes that are easy to miss.
 
 ## Commands
 
 ```text
+devsync init                 # scaffold devsync.toml here; --install-skill adds the skill
 devsync status
 devsync sync
 devsync sync --delete

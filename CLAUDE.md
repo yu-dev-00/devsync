@@ -27,7 +27,8 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 
 | Module | Responsibility |
 | --- | --- |
-| [src/main.rs](src/main.rs) | clap CLI, dispatch; loads config for every subcommand except `agent` |
+| [src/main.rs](src/main.rs) | clap CLI, dispatch; loads config for every subcommand except `agent` and `init` |
+| [src/init.rs](src/init.rs) | `init` — scaffold `devsync.toml`, `.gitignore` entry, `--install-skill` |
 | [src/config.rs](src/config.rs) | `devsync.toml` parse, defaults, required-field validation, `commands.<name>` lookup |
 | [src/sync.rs](src/sync.rs) | `status` / `sync` / `exec` / `run_command` flows |
 | [src/client.rs](src/client.rs) | spawns `ssh -p <port> user@host "<agent_path> agent --stdio"`, handshake, framed I/O |
@@ -49,6 +50,7 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 - **Excludes apply on both sides.** The agent builds its manifest with the same exclude list, so remote-only build output (`bin`, `obj`, `dist`, …) is invisible to the diff and `sync --delete` cannot remove it. Changing where excludes are applied changes what `--delete` destroys.
 - **Diff is content-hash based**, never mtime — intentional, to dodge Windows timestamp precision/timezone issues. The hash cache does compare mtime, but only against the timestamp *the same machine* recorded when it last hashed *that same file*; a local timestamp is never compared to a remote one. Do not "simplify" it into an mtime-based diff.
 - **Both sides cache hashes** in `<root>/.devsync/state`. `.devsync` is a forced exclude, so the cache is never uploaded and `sync --delete` never removes it — check that still holds if you touch the exclude list. A missing or corrupt cache must degrade to hashing everything, never fail the walk.
+- **`init` embeds its templates.** `devsync.toml.example` and `skills/devsync/SKILL.md` are pulled in with `include_str!`, because what gets installed is a lone `devsync.exe` with no source tree beside it. `render_config` fails loudly if a placeholder line it substitutes has disappeared from the example, so the two cannot drift silently. The skill installs to `~/.claude/skills/`, never per-project: it describes the tool, so copies would go stale as the tool changes.
 - **Only named commands are executable.** `Exec { name }` resolves against the `commands` map the client sent; there is no arbitrary-command path, and a `shell` subcommand is deliberately out of scope.
 - **Execution syncs first.** `exec`/`build`/`run`/`test` all call `sync` unless `--no-sync`; `build`/`run`/`test` are pure aliases for `exec <name>`. Command names in `[commands]` are arbitrary and may collide with subcommand names (`devsync exec sync` runs `commands.sync`).
 - **`sync` waits for the `SyncComplete` ack** before returning, because `RemoteClient::Drop` kills the ssh child — dropping early would truncate pending writes. The exec arms in `main.rs` call `std::process::exit(code)` (skipping `Drop`) only after the `Exit` frame has arrived.
