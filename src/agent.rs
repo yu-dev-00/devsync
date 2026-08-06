@@ -84,6 +84,10 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
     // handshakes first and bails on mismatch. Enforcing handshake-first on the
     // agent (rejecting any pre-handshake operational message) is a v2 follow-up.
     let mut config: Option<AgentConfig> = None;
+    // Files actually written since the last SyncComplete, so the ack reports what
+    // the agent did rather than a placeholder. Reset when the ack is sent, which
+    // is what bounds one sync from the next on a reused connection.
+    let mut written_since_ack = 0usize;
 
     loop {
         let message = match protocol::read_message(&mut reader) {
@@ -158,6 +162,7 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(target, bytes)?;
+                written_since_ack += 1;
             }
             Message::SyncPlan { upload: _, delete } => {
                 let Some(config) = &config else {
@@ -179,11 +184,14 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                         deleted += 1;
                     }
                 }
+                // `skipped` stays 0: skipping is a local decision made from the diff,
+                // so the agent never learns about a file the client chose not to send.
                 protocol::write_message(&mut writer, &Message::SyncComplete {
-                    uploaded: 0,
+                    uploaded: written_since_ack,
                     deleted,
                     skipped: 0,
                 })?;
+                written_since_ack = 0;
             }
             Message::Exec { name } => {
                 let Some(config) = &config else {
