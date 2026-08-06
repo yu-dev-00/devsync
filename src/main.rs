@@ -1,5 +1,5 @@
 use anyhow::Result;
-use devsync::{agent, config, sync, verbose};
+use devsync::{agent, config, init, sync, verbose};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -22,6 +22,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Create devsync.toml in this project (and optionally install the skill)
+    Init(InitArgs),
     Status,
     Sync(SyncArgs),
     /// Execute a named command from [commands], syncing first by default
@@ -33,6 +35,25 @@ enum Command {
     /// Alias for `exec test`; syncs first by default
     Test(RunFlags),
     Agent(AgentArgs),
+}
+
+#[derive(Debug, Args)]
+struct InitArgs {
+    /// Remote host to write into connection.host
+    #[arg(long)]
+    host: Option<String>,
+    /// Remote user to write into connection.user
+    #[arg(long)]
+    user: Option<String>,
+    /// Remote execution directory to write into paths.remote_dir
+    #[arg(long)]
+    remote_dir: Option<String>,
+    /// Overwrite an existing config
+    #[arg(long)]
+    force: bool,
+    /// Also install the Claude Code skill into ~/.claude/skills/devsync
+    #[arg(long)]
+    install_skill: bool,
 }
 
 #[derive(Debug, Args)]
@@ -66,12 +87,26 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     verbose::set_enabled(cli.verbose);
 
-    let cfg = if matches!(&cli.command, Command::Agent(_)) {
+    // `init` is what creates the config, so requiring one would make it unusable
+    // in exactly the situation it exists for.
+    let cfg = if matches!(&cli.command, Command::Agent(_) | Command::Init(_)) {
         None
     } else {
         Some(config::Config::load(&cli.config)?)
     };
     match cli.command {
+        Command::Init(args) => {
+            init::run(
+                &cli.config,
+                &init::InitOptions {
+                    host: args.host,
+                    user: args.user,
+                    remote_dir: args.remote_dir,
+                    force: args.force,
+                    install_skill: args.install_skill,
+                },
+            )?;
+        }
         Command::Status => {
             let cfg = cfg.as_ref().expect("config loaded for local commands");
             sync::status(cfg)?;

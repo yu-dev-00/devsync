@@ -4,6 +4,7 @@ pub mod config;
 pub mod diff;
 pub mod exclude;
 pub mod hash_cache;
+pub mod init;
 pub mod manifest;
 pub mod path_safety;
 pub mod protocol;
