@@ -20,6 +20,26 @@ fn perform_handshake_succeeds_on_matching_version() {
     assert_eq!(sent, devsync::protocol::Message::Hello { version: devsync::protocol::PROTOCOL_VERSION });
 }
 
+/// Regression: when the agent never replies (ssh could not reach the host, or
+/// connection.agent_path is wrong) the bare io error is "failed to fill whole
+/// buffer", which tells the user nothing. The handshake must name what to check.
+#[test]
+fn perform_handshake_reports_actionable_error_when_agent_never_replies() {
+    let mut reader = Cursor::new(Vec::new()); // agent produced no output at all
+    let mut writer: Vec<u8> = Vec::new();
+
+    let err = devsync::client::perform_handshake(&mut reader, &mut writer).unwrap_err().to_string();
+
+    assert!(
+        err.contains("agent_path"),
+        "error should point at connection.agent_path, got: {err}"
+    );
+    assert!(
+        err.contains("ssh"),
+        "error should point at the ssh connection, got: {err}"
+    );
+}
+
 #[test]
 fn perform_handshake_fails_on_version_mismatch() {
     let mut agent_reply = Vec::new();
