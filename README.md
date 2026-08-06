@@ -111,9 +111,12 @@ and building there — which quietly compiles whatever was synced last.
 
 It installs once per user rather than per project, because it describes how
 devsync works, not what any one project does. A per-project copy would go stale
-as devsync changes and keep advising behavior that no longer exists. Re-run
-`devsync init --install-skill` (or install it alone in an already-configured
-project with `--force`) after upgrading to refresh it.
+as devsync changes and keep advising behavior that no longer exists.
+
+Re-run `devsync init --install-skill` after upgrading to refresh it. That is safe
+in a project that is already set up: with `--install-skill`, an existing
+`devsync.toml` is reported and left alone rather than treated as an error, so
+refreshing the skill never costs you your connection details or `[commands]`.
 
 `docs/manual-test.md` has a fuller checklist for verifying an installation,
 including the failure modes that are easy to miss.
