@@ -93,11 +93,17 @@ so the output-buffering behavior below is observable.
 9. `devsync exec nosuchname` — rejected locally, before any connection.
 10. `devsync run --no-sync` — no `uploaded:` line; executes against the current copy.
 
-**Note on output timing.** Output does *not* stream. The agent uses `.output()`
-([src/agent.rs](../src/agent.rs)), so a command producing output over 5 seconds
-stays silent and then prints everything at once on exit. This is a known v1
-limitation, not a defect — confirm it behaves this way rather than expecting
-incremental output.
+**Check output timing.** Output streams as the command produces it. With a
+`run.ps1` that prints a line per second, the lines must appear about a second
+apart, not all at once when the command exits. Timestamping each line makes this
+unambiguous:
+
+```bash
+devsync run 2>&1 | while IFS= read -r line; do echo "$(date +%H:%M:%S.%3N)  $line"; done
+```
+
+Output arriving in one burst at the end means the agent is buffering — a
+regression of the streaming path in [src/agent.rs](../src/agent.rs).
 
 ## Phase 5: Checks the core list does not cover
 
@@ -158,5 +164,7 @@ Two defects were found and fixed:
   [src/client.rs](../src/client.rs); regression test
   `perform_handshake_reports_actionable_error_when_agent_never_replies`.
 
-Output buffering behaved as documented — confirmed as a known limitation, not
-fixed here.
+Output buffering was confirmed as a third limitation and then fixed in the same
+session: the agent now spawns the command and streams `Output` frames as they
+are produced. Re-verified on the same hardware — a script printing once a second
+arrives a line per second instead of in one burst after 6 seconds.
