@@ -177,6 +177,47 @@ fn e2e_exec_runs_named_command_and_streams_exit() {
     child.wait().ok();
 }
 
+// ── test 2b ────────────────────────────────────────────────────────────────
+
+/// Regression: PowerShell's `-Command` collapses every non-zero native exit
+/// code to 1, so the agent must append an explicit `exit $LASTEXITCODE`.
+/// Without it a `cargo build` failing with 101 is reported as 1, and the exact
+/// code required by the spec's error-handling section is lost.
+#[test]
+fn e2e_exec_propagates_exact_nonzero_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+
+    devsync::client::perform_handshake(&mut stdout, &mut stdin).expect("handshake");
+
+    let mut commands = BTreeMap::new();
+    commands.insert("failing".to_string(), "cmd /c exit 7".to_string());
+    protocol::write_message(
+        &mut stdin,
+        &Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands,
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+
+    protocol::write_message(&mut stdin, &Message::Exec { name: "failing".into() }).unwrap();
+
+    let exit_code = loop {
+        match protocol::read_message(&mut stdout).unwrap() {
+            Message::Output { .. } => {}
+            Message::Exit { code } => break code,
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    };
+
+    assert_eq!(exit_code, 7, "the exact remote exit code must survive, not collapse to 1");
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
 // ── test 3 ─────────────────────────────────────────────────────────────────
 
 #[test]

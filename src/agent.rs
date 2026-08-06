@@ -142,6 +142,14 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     continue;
                 };
 
+                // PowerShell's `-Command` does not forward a native child process's exit
+                // code: every non-zero result collapses to 1, so `cargo build` failing
+                // with 101 (or a script calling `exit 3`) would be reported as 1. An
+                // explicit trailing `exit $LASTEXITCODE` propagates the real code. When
+                // the command ran no native process $LASTEXITCODE is $null, and
+                // `exit $null` yields 0, so successful runs are unaffected.
+                let wrapped_command = format!("{command}; exit $LASTEXITCODE");
+
                 // NOTE (v1 limitation): `.output()` buffers all stdout/stderr until the
                 // process exits, so a long-running command shows no output until it
                 // finishes. The protocol and client exec loop already support incremental
@@ -152,7 +160,7 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     .arg("-ExecutionPolicy")
                     .arg("Bypass")
                     .arg("-Command")
-                    .arg(command)
+                    .arg(&wrapped_command)
                     .current_dir(&config.remote_dir)
                     .output()?;
 
