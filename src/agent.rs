@@ -11,6 +11,61 @@ struct AgentConfig {
     exclude: Vec<String>,
 }
 
+/// Forward everything readable from one child pipe to `sender`, tagged with the
+/// stream it came from. Ends at EOF, on a read error, or once the receiver is
+/// gone. Read errors are swallowed deliberately: the exec loop still needs to
+/// reap the child and report its exit code.
+fn pump_stream<R: std::io::Read>(
+    stream: &'static str,
+    mut source: R,
+    sender: std::sync::mpsc::Sender<(&'static str, Vec<u8>)>,
+) {
+    let mut chunk = [0u8; 8192];
+    loop {
+        match source.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                if sender.send((stream, chunk[..read].to_vec())).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Decode the longest valid UTF-8 prefix of `buffer`, removing what it consumed.
+/// A trailing incomplete sequence is left in place for the next chunk; bytes
+/// that can never be valid are replaced, matching `String::from_utf8_lossy`.
+fn take_decodable(buffer: &mut Vec<u8>) -> String {
+    let mut decoded = String::new();
+    loop {
+        match std::str::from_utf8(buffer) {
+            Ok(text) => {
+                decoded.push_str(text);
+                buffer.clear();
+                return decoded;
+            }
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                decoded.push_str(
+                    std::str::from_utf8(&buffer[..valid_up_to]).expect("prefix is valid utf-8"),
+                );
+                match error.error_len() {
+                    Some(invalid_len) => {
+                        decoded.push('\u{FFFD}');
+                        buffer.drain(..valid_up_to + invalid_len);
+                    }
+                    // Truncated at the chunk boundary — keep it for the next read.
+                    None => {
+                        buffer.drain(..valid_up_to);
+                        return decoded;
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn run_stdio_agent() -> Result<()> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -150,34 +205,70 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 // `exit $null` yields 0, so successful runs are unaffected.
                 let wrapped_command = format!("{command}; exit $LASTEXITCODE");
 
-                // NOTE (v1 limitation): `.output()` buffers all stdout/stderr until the
-                // process exits, so a long-running command shows no output until it
-                // finishes. The protocol and client exec loop already support incremental
-                // Output frames; a future version should `.spawn()` and stream output via
-                // reader threads. PowerShell output is decoded lossily below.
-                let output = std::process::Command::new("powershell")
+                // stdin MUST be null: the agent's own stdin is the protocol stream, and
+                // an inherited handle would let the child consume frames meant for us.
+                let mut child = std::process::Command::new("powershell")
                     .arg("-NoProfile")
                     .arg("-ExecutionPolicy")
                     .arg("Bypass")
                     .arg("-Command")
                     .arg(&wrapped_command)
                     .current_dir(&config.remote_dir)
-                    .output()?;
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()?;
 
-                if !output.stdout.is_empty() {
-                    protocol::write_message(&mut writer, &Message::Output {
-                        stream: "stdout".into(),
-                        data: String::from_utf8_lossy(&output.stdout).to_string(),
-                    })?;
+                let child_stdout = child.stdout.take().expect("stdout was piped");
+                let child_stderr = child.stderr.take().expect("stderr was piped");
+
+                // Both pipes must be drained concurrently: a child that fills one while
+                // we block on the other would deadlock. Reader threads forward raw bytes
+                // to this thread, which owns `writer` — protocol frames must never be
+                // written from two threads or they would interleave mid-frame.
+                let (sender, receiver) = std::sync::mpsc::channel::<(&'static str, Vec<u8>)>();
+                let stdout_pump = {
+                    let sender = sender.clone();
+                    std::thread::spawn(move || pump_stream("stdout", child_stdout, sender))
+                };
+                let stderr_pump = std::thread::spawn(move || pump_stream("stderr", child_stderr, sender));
+
+                // Chunk boundaries fall at arbitrary byte offsets, so a multi-byte UTF-8
+                // sequence can straddle two reads. Buffer per stream and only decode the
+                // complete prefix, or streaming would corrupt characters that the old
+                // decode-everything-at-once path got right.
+                let mut stdout_buf: Vec<u8> = Vec::new();
+                let mut stderr_buf: Vec<u8> = Vec::new();
+                for (stream, chunk) in receiver {
+                    let buffer = if stream == "stderr" { &mut stderr_buf } else { &mut stdout_buf };
+                    buffer.extend_from_slice(&chunk);
+                    let data = take_decodable(buffer);
+                    if !data.is_empty() {
+                        protocol::write_message(
+                            &mut writer,
+                            &Message::Output { stream: stream.to_string(), data },
+                        )?;
+                    }
                 }
-                if !output.stderr.is_empty() {
-                    protocol::write_message(&mut writer, &Message::Output {
-                        stream: "stderr".into(),
-                        data: String::from_utf8_lossy(&output.stderr).to_string(),
-                    })?;
+
+                // At EOF a leftover is a genuinely truncated sequence, not a boundary.
+                for (stream, buffer) in [("stdout", &stdout_buf), ("stderr", &stderr_buf)] {
+                    if !buffer.is_empty() {
+                        protocol::write_message(
+                            &mut writer,
+                            &Message::Output {
+                                stream: stream.to_string(),
+                                data: String::from_utf8_lossy(buffer).to_string(),
+                            },
+                        )?;
+                    }
                 }
+
+                let _ = stdout_pump.join();
+                let _ = stderr_pump.join();
+                let status = child.wait()?;
                 protocol::write_message(&mut writer, &Message::Exit {
-                    code: output.status.code().unwrap_or(1),
+                    code: status.code().unwrap_or(1),
                 })?;
             }
             _ => {

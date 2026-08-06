@@ -218,6 +218,111 @@ fn e2e_exec_propagates_exact_nonzero_exit_code() {
     child.wait().ok();
 }
 
+// ── test 2c ────────────────────────────────────────────────────────────────
+
+/// Output must reach the client while the command is still running, not be
+/// buffered until it exits. The command prints, sleeps, then prints again; the
+/// first Output frame has to arrive well before the sleep is over.
+#[test]
+fn e2e_exec_streams_output_before_the_command_exits() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+
+    devsync::client::perform_handshake(&mut stdout, &mut stdin).expect("handshake");
+
+    let mut commands = BTreeMap::new();
+    commands.insert(
+        "slow".to_string(),
+        "Write-Output early; Start-Sleep -Seconds 3; Write-Output late".to_string(),
+    );
+    protocol::write_message(
+        &mut stdin,
+        &Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands,
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+
+    let started = std::time::Instant::now();
+    protocol::write_message(&mut stdin, &Message::Exec { name: "slow".into() }).unwrap();
+
+    let mut first_output_at = None;
+    let mut collected = String::new();
+    let exit_code = loop {
+        match protocol::read_message(&mut stdout).unwrap() {
+            Message::Output { data, .. } => {
+                if first_output_at.is_none() && data.contains("early") {
+                    first_output_at = Some(started.elapsed());
+                }
+                collected.push_str(&data);
+            }
+            Message::Exit { code } => break code,
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    };
+
+    let first = first_output_at.expect("the 'early' line must arrive as its own Output frame");
+    assert!(
+        first < std::time::Duration::from_millis(2500),
+        "first output arrived after {first:?}; it must not wait for the 3s sleep to finish"
+    );
+    assert!(collected.contains("early") && collected.contains("late"), "got: {collected:?}");
+    assert_eq!(exit_code, 0);
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+// ── test 2d ────────────────────────────────────────────────────────────────
+
+/// Output larger than one read buffer is reassembled from several chunks, so
+/// nothing may be dropped, duplicated, or reordered at the seams.
+#[test]
+fn e2e_exec_reassembles_output_larger_than_one_chunk() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+
+    devsync::client::perform_handshake(&mut stdout, &mut stdin).expect("handshake");
+
+    const LINES: usize = 2000; // ~20 KB, well past the 8 KB read buffer
+    let mut commands = BTreeMap::new();
+    commands.insert(
+        "chatty".to_string(),
+        format!("1..{LINES} | ForEach-Object {{ Write-Output \"line $_\" }}"),
+    );
+    protocol::write_message(
+        &mut stdin,
+        &Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands,
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+
+    protocol::write_message(&mut stdin, &Message::Exec { name: "chatty".into() }).unwrap();
+
+    let mut collected = String::new();
+    loop {
+        match protocol::read_message(&mut stdout).unwrap() {
+            Message::Output { stream, data } if stream == "stdout" => collected.push_str(&data),
+            Message::Output { .. } => {}
+            Message::Exit { .. } => break,
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    }
+
+    let lines: Vec<&str> = collected.lines().filter(|line| !line.trim().is_empty()).collect();
+    assert_eq!(lines.len(), LINES, "every line must survive chunk reassembly");
+    assert_eq!(lines[0].trim(), "line 1");
+    assert_eq!(lines[LINES - 1].trim(), format!("line {LINES}"));
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
 // ── test 3 ─────────────────────────────────────────────────────────────────
 
 #[test]
