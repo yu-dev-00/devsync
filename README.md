@@ -26,6 +26,16 @@ subcommand is fine: `devsync exec sync` runs `commands.sync`, not `devsync sync`
 
 See `devsync.toml.example` for configuration and `docs/manual-test.md` for the Windows OpenSSH E2E checklist.
 
+## Hash cache
+
+Both sides record file hashes in `<root>/.devsync/state` and reuse them for
+files whose size and modification time are unchanged since the last run, so an
+unchanged tree is not re-read on every command. Uploads are still decided by
+comparing content hashes, never timestamps.
+
+`.devsync/` is a forced exclude: the cache is never uploaded and never deleted
+by `sync --delete`. Delete the directory to force a full rehash.
+
 ## `sync --delete` and excludes
 
 `devsync sync --delete` deletes any file under `remote_dir` that is not part of the

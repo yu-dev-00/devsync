@@ -34,6 +34,7 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 | [src/agent.rs](src/agent.rs) | remote message loop (config, manifest, file apply, delete, exec) |
 | [src/protocol.rs](src/protocol.rs) | `Message` enum + frame encode/decode, `PROTOCOL_VERSION` |
 | [src/manifest.rs](src/manifest.rs) | walk a root, BLAKE3-hash every non-excluded file, sorted slash paths |
+| [src/hash_cache.rs](src/hash_cache.rs) | `<root>/.devsync/state` — reuse hashes for files unchanged since the last walk |
 | [src/diff.rs](src/diff.rs) | upload / delete / skip plan from two manifests |
 | [src/exclude.rs](src/exclude.rs) | configured + forced excludes (`devsync.toml`, `.devsync`, `.git`) |
 | [src/path_safety.rs](src/path_safety.rs) | rejects absolute paths, drive letters, `..`, empty segments |
@@ -45,7 +46,8 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 - **Frame format:** 4-byte big-endian JSON length, then the JSON message, then — *only* for `File` — exactly `size` raw payload bytes. Both sides must consume that payload or the stream desyncs. `agent.rs` deliberately reads the bytes *before* any validation or error return for that reason, and `sync::build_file_message` derives `size`/`hash` from the bytes it just read so the header can never disagree with the payload.
 - **Handshake:** the client sends `Hello`, and requires a matching `HelloAck` (a plain `Hello` echo is rejected — that's how an old agent is caught). Bump `PROTOCOL_VERSION` whenever the `Message` enum or framing changes.
 - **Excludes apply on both sides.** The agent builds its manifest with the same exclude list, so remote-only build output (`bin`, `obj`, `dist`, …) is invisible to the diff and `sync --delete` cannot remove it. Changing where excludes are applied changes what `--delete` destroys.
-- **Diff is content-hash based**, never mtime — intentional, to dodge Windows timestamp precision/timezone issues.
+- **Diff is content-hash based**, never mtime — intentional, to dodge Windows timestamp precision/timezone issues. The hash cache does compare mtime, but only against the timestamp *the same machine* recorded when it last hashed *that same file*; a local timestamp is never compared to a remote one. Do not "simplify" it into an mtime-based diff.
+- **Both sides cache hashes** in `<root>/.devsync/state`. `.devsync` is a forced exclude, so the cache is never uploaded and `sync --delete` never removes it — check that still holds if you touch the exclude list. A missing or corrupt cache must degrade to hashing everything, never fail the walk.
 - **Only named commands are executable.** `Exec { name }` resolves against the `commands` map the client sent; there is no arbitrary-command path, and a `shell` subcommand is deliberately out of scope.
 - **Execution syncs first.** `exec`/`build`/`run`/`test` all call `sync` unless `--no-sync`; `build`/`run`/`test` are pure aliases for `exec <name>`. Command names in `[commands]` are arbitrary and may collide with subcommand names (`devsync exec sync` runs `commands.sync`).
 - **`sync` waits for the `SyncComplete` ack** before returning, because `RemoteClient::Drop` kills the ssh child — dropping early would truncate pending writes. The exec arms in `main.rs` call `std::process::exit(code)` (skipping `Drop`) only after the `Exit` frame has arrived.

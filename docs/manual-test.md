@@ -146,7 +146,19 @@ Both should name `agent_path` and the ssh connection as things to check.
 bumped and run it against the deployed agent. Expect
 `unsupported protocol version: N (agent supports M)`. Revert afterwards.
 
-**6. Non-ASCII command output.** Add a script that prints text in your language
+**6. Hash cache.** After a `sync`, both `<local_dir>/.devsync/state` and
+`<remote_dir>/.devsync/state` must exist. Then check all three of these:
+
+- `devsync status` reports `upload: 0` / `delete: 0` — the cache files must not
+  show up as files to sync or delete.
+- `devsync sync --delete` leaves `<remote_dir>/.devsync/state` in place.
+- Editing a file after the cache is warm still shows it as an upload. A cache
+  that hides an edit is the one failure mode that loses work silently.
+
+Deleting `.devsync/` forces a full rehash; that is the escape hatch if a cache
+is ever suspected of being wrong.
+
+**7. Non-ASCII command output.** Add a script that prints text in your language
 and run it through `devsync exec`. The text must arrive intact — replacement
 characters (`?`) mean the console code page was misdecoded.
 
