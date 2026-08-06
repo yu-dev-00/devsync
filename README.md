@@ -2,7 +2,80 @@
 
 `devsync` keeps a local Windows project as the source of truth and syncs it to a remote Windows execution copy through an SSH-launched stdio agent.
 
-Initial commands:
+## Installation
+
+The same executable is both the local client and the remote agent, so it has to
+be installed on **both** machines.
+
+### 1. Remote: enable OpenSSH
+
+On the remote Windows machine, as administrator:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+Leave the default login shell alone. The agent writes protocol frames — and
+nothing else — to stdout, so if the shell is switched to PowerShell, its profile
+banner is prepended to the stream and corrupts the frame length, which shows up
+as a handshake failure. No output from this means nothing is overridden:
+
+```powershell
+Get-ItemProperty "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -ErrorAction SilentlyContinue
+```
+
+### 2. Set up key authentication
+
+From the local machine, confirm this prints exactly `ok`, with no password
+prompt and no banner:
+
+```bash
+ssh <user>@<host> "echo ok"
+```
+
+A single stray character here will break the protocol. If you are prompted for a
+password, copy your public key to `C:\Users\<user>\.ssh\authorized_keys` on the
+remote. For an administrator account the file is
+`C:\ProgramData\ssh\administrators_authorized_keys` instead, and its ACL must be
+restricted or sshd ignores it.
+
+### 3. Build and deploy
+
+```bash
+cargo build --release
+```
+
+Install `target\release\devsync.exe` locally somewhere on your `PATH`, and copy
+the same binary to the remote machine:
+
+```bash
+scp target/release/devsync.exe '<host>:C:\tools\devsync.exe'
+ssh <host> "C:\tools\devsync.exe --help"
+```
+
+**Both sides must run the same build.** The handshake compares
+`PROTOCOL_VERSION` and refuses to continue on a mismatch, so after upgrading,
+redeploy the remote copy as well. The error names both versions when you forget.
+
+### 4. Configure the project
+
+Copy `devsync.toml.example` to `devsync.toml` in your project root and set
+`connection.host`, `connection.user`, `connection.agent_path` (where you put the
+remote binary), and `paths.remote_dir`. Then:
+
+```bash
+devsync status
+```
+
+This transfers nothing; it prints what a sync *would* upload and delete. Once it
+looks right, run `devsync sync`.
+
+`docs/manual-test.md` has a fuller checklist for verifying an installation,
+including the failure modes that are easy to miss.
+
+## Commands
 
 ```text
 devsync status
@@ -24,7 +97,11 @@ devsync test                 # alias for: devsync exec test
 Command names in `[commands]` are arbitrary. A name that matches a devsync
 subcommand is fine: `devsync exec sync` runs `commands.sync`, not `devsync sync`.
 
-See `devsync.toml.example` for configuration and `docs/manual-test.md` for the Windows OpenSSH E2E checklist.
+Commands run with `remote_dir` as the working directory, and their output
+streams back as it is produced. The remote command's own exit code becomes
+devsync's exit code.
+
+See `devsync.toml.example` for the full set of configuration options.
 
 ## Hash cache
 
