@@ -32,23 +32,31 @@ pub struct InitOptions {
 }
 
 pub fn run(config_path: &Path, options: &InitOptions) -> Result<()> {
-    if config_path.exists() && !options.force {
-        bail!(
-            "{} already exists; pass --force to overwrite it",
-            config_path.display()
-        );
-    }
-
-    let rendered = render_config(options)?;
-    if let Some(parent) = config_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
+    // Refreshing the skill in an already-configured project is a normal thing to
+    // want after an upgrade. Erroring there would push people toward --force,
+    // which would take their connection details and [commands] with it.
+    let wrote_config = if config_path.exists() && !options.force {
+        if !options.install_skill {
+            bail!(
+                "{} already exists; pass --force to overwrite it",
+                config_path.display()
+            );
         }
-    }
-    std::fs::write(config_path, rendered)
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
-    println!("wrote {}", config_path.display());
+        println!("{} already exists; left unchanged", config_path.display());
+        false
+    } else {
+        let rendered = render_config(options)?;
+        if let Some(parent) = config_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+        }
+        std::fs::write(config_path, rendered)
+            .with_context(|| format!("failed to write {}", config_path.display()))?;
+        println!("wrote {}", config_path.display());
+        true
+    };
 
     let project_dir = config_path.parent().unwrap_or(Path::new("."));
     match update_gitignore(project_dir)? {
@@ -63,6 +71,9 @@ pub fn run(config_path: &Path, options: &InitOptions) -> Result<()> {
         println!("  (re-run with --install-skill after upgrading devsync to refresh it)");
     }
 
+    if !wrote_config {
+        return Ok(());
+    }
     if options.host.is_none() || options.user.is_none() || options.remote_dir.is_none() {
         println!(
             "\nEdit {} and fill in the connection details, then run `devsync status`.",

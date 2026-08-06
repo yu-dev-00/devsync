@@ -57,6 +57,24 @@ fn refuses_to_overwrite_without_force() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "# hand written\n");
 }
 
+/// Refreshing the skill after an upgrade must not cost you your config. If this
+/// errored, the only documented way through would be --force, which takes the
+/// connection details and [commands] with it.
+#[test]
+fn install_skill_leaves_an_existing_config_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devsync.toml");
+    fs::write(&path, "# hand written\n").unwrap();
+
+    std::env::set_var("USERPROFILE", home.path());
+    let result = init::run(&path, &init::InitOptions { install_skill: true, ..options() });
+
+    assert!(result.is_ok(), "installing the skill must not fail on an existing config");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "# hand written\n");
+    assert!(home.path().join(".claude/skills/devsync/SKILL.md").is_file());
+}
+
 #[test]
 fn force_overwrites() {
     let dir = tempfile::tempdir().unwrap();
