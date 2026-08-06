@@ -42,7 +42,17 @@ pub fn status(config: &Config) -> Result<()> {
 
 pub fn local_manifest(config: &Config) -> Result<Manifest> {
     let matcher = ExcludeMatcher::new(config.sync.exclude.clone())?;
-    manifest::build_manifest(&config.paths.local_dir, &matcher)
+    let started = std::time::Instant::now();
+    let manifest = manifest::build_manifest(&config.paths.local_dir, &matcher)?;
+    // The elapsed time is worth showing: it is how a cold walk (everything
+    // hashed) is told apart from one served by the hash cache.
+    crate::vlog!(
+        "local manifest: {} file(s) in {:?} from {}",
+        manifest.files.len(),
+        started.elapsed(),
+        config.paths.local_dir.display()
+    );
+    Ok(manifest)
 }
 
 pub fn remote_manifest(config: &Config) -> Result<Manifest> {
@@ -64,7 +74,14 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
         Message::Error { message } => bail!(message),
         other => bail!("unexpected response to manifest_request: {other:?}"),
     };
+    crate::vlog!("remote manifest: {} file(s)", remote_manifest.files.len());
     let plan = diff::calculate_diff(&local_manifest, &remote_manifest, delete);
+    crate::vlog!(
+        "plan: {} upload, {} delete, {} skip",
+        plan.upload.len(),
+        plan.delete.len(),
+        plan.skipped
+    );
 
     // NOTE (v1 limitation): file uploads are sent fire-and-forget; per-file
     // agent responses (e.g. a hash-mismatch Error) are not read here. Such an
@@ -72,8 +89,12 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
     // the sync to bail. A future version should read per-file acknowledgements.
     for path in &plan.upload {
         let (message, bytes) = build_file_message(&config.paths.local_dir, path)?;
+        crate::vlog!("uploading {path} ({} bytes)", bytes.len());
         client.write(&message)?;
         client.raw_write_all(&bytes)?;
+    }
+    for path in &plan.delete {
+        crate::vlog!("deleting {path}");
     }
 
     client.write(&Message::SyncPlan {
@@ -85,7 +106,12 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
     // before the connection is dropped (Drop kills the ssh child). Reading the
     // SyncComplete ack guarantees the agent flushed every file write to disk.
     match client.read()? {
-        Message::SyncComplete { .. } => {}
+        // Only the agent's own counts are echoed here. `skipped` is excluded on
+        // purpose: it is decided locally, so the agent always reports 0 and
+        // printing it would look like a discrepancy.
+        Message::SyncComplete { uploaded, deleted, .. } => {
+            crate::vlog!("agent acked: wrote {uploaded} file(s), deleted {deleted}");
+        }
         Message::Error { message } => bail!(message),
         other => bail!("unexpected response to sync_plan: {other:?}"),
     }
@@ -98,7 +124,9 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
 }
 
 pub fn exec(config: &Config, name: &str) -> Result<i32> {
-    config.command(name)?;
+    let command = config.command(name)?;
+    crate::vlog!("exec {name}: {command}");
+    let started = std::time::Instant::now();
     let mut client = RemoteClient::connect(config)?;
     client.write(&Message::Exec { name: name.to_string() })?;
 
@@ -111,7 +139,10 @@ pub fn exec(config: &Config, name: &str) -> Result<i32> {
                     print!("{data}");
                 }
             }
-            Message::Exit { code } => return Ok(code),
+            Message::Exit { code } => {
+                crate::vlog!("exec {name} exited {code} after {:?}", started.elapsed());
+                return Ok(code);
+            }
             Message::Error { message } => bail!(message),
             other => bail!("unexpected response to exec: {other:?}"),
         }

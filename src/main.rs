@@ -1,5 +1,5 @@
 use anyhow::Result;
-use devsync::{agent, config, sync};
+use devsync::{agent, config, sync, verbose};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -7,10 +7,13 @@ use std::path::PathBuf;
 #[command(name = "devsync")]
 #[command(about = "Sync local projects to a remote Windows execution copy")]
 struct Cli {
-    #[arg(long, default_value = "devsync.toml")]
+    // `global` so these work on either side of the subcommand. `devsync build -v`
+    // is what people actually type; without it clap rejects the flag there.
+    #[arg(long, default_value = "devsync.toml", global = true)]
     config: PathBuf,
 
-    #[arg(short, long)]
+    /// Print local progress and protocol diagnostics to stderr
+    #[arg(short, long, global = true)]
     verbose: bool,
 
     #[command(subcommand)]
@@ -61,6 +64,7 @@ struct AgentArgs {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    verbose::set_enabled(cli.verbose);
 
     let cfg = if matches!(&cli.command, Command::Agent(_)) {
         None

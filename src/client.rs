@@ -14,12 +14,16 @@ pub fn perform_handshake<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> R
     // error ("failed to fill whole buffer") is useless on its own, so name the
     // two things worth checking. ssh.exe's own stderr is inherited and usually
     // prints the underlying cause just above this message.
+    crate::vlog!("handshake: sent hello version {}", protocol::PROTOCOL_VERSION);
     let response = protocol::read_message(reader).context(
         "no response from the remote agent: check that ssh can reach the host and \
          that connection.agent_path points at devsync.exe on the remote machine",
     )?;
     match response {
-        Message::HelloAck { agent_version } if agent_version == protocol::PROTOCOL_VERSION => Ok(()),
+        Message::HelloAck { agent_version } if agent_version == protocol::PROTOCOL_VERSION => {
+            crate::vlog!("handshake: agent acknowledged version {agent_version}");
+            Ok(())
+        }
         Message::HelloAck { agent_version } => {
             anyhow::bail!(
                 "remote agent protocol version {agent_version} != local {}",
@@ -43,6 +47,13 @@ impl RemoteClient {
     pub fn connect(config: &Config) -> Result<Self> {
         let target = format!("{}@{}", config.connection.user, config.connection.host);
         let remote_command = format!("\"{}\" agent --stdio", config.connection.agent_path);
+        // Printed before spawning, so it is visible even when ssh itself fails to
+        // start. This line is the one worth copying into a terminal by hand when
+        // a connection problem needs isolating from devsync.
+        crate::vlog!(
+            "spawning: ssh -p {} {target} {remote_command}",
+            config.connection.port
+        );
         let mut child = Command::new("ssh")
             .arg("-p")
             .arg(config.connection.port.to_string())
@@ -68,6 +79,12 @@ impl RemoteClient {
     }
 
     fn send_config(&mut self, config: &Config) -> Result<()> {
+        crate::vlog!(
+            "sending config: remote_dir={}, {} command(s), {} exclude(s)",
+            config.paths.remote_dir,
+            config.commands.len(),
+            config.sync.exclude.len()
+        );
         self.write(&Message::Config {
             remote_dir: config.paths.remote_dir.clone(),
             commands: config.commands.clone(),
