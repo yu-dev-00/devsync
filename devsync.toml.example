@@ -2,7 +2,12 @@
 host = "remote-pc"
 user = "user"
 port = 22
-agent_path = "C:\\tools\\devsync.exe"
+
+# agent_path defaults to "devsync.exe", resolved through the remote user's PATH.
+# Installing the agent to %LOCALAPPDATA%\Programs\devsync and putting that
+# directory on PATH (see the README) means you can leave this out entirely.
+# Set it only when the agent lives somewhere off PATH:
+# agent_path = "C:\\tools\\devsync.exe"
 
 [paths]
 local_dir = "."
