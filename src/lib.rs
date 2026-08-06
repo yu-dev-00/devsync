@@ -8,3 +8,4 @@ pub mod manifest;
 pub mod path_safety;
 pub mod protocol;
 pub mod sync;
+pub mod verbose;
