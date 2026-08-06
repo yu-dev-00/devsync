@@ -41,29 +41,49 @@ remote. For an administrator account the file is
 `C:\ProgramData\ssh\administrators_authorized_keys` instead, and its ACL must be
 restricted or sshd ignores it.
 
-### 3. Build and deploy
+### 3. Build and install
 
 ```bash
 cargo build --release
 ```
 
-Install `target\release\devsync.exe` locally somewhere on your `PATH`, and copy
-the same binary to the remote machine:
+Install `target\release\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on
+**both** machines, and add that directory to each machine's user `PATH`. This is
+the standard per-user location on Windows, so no administrator rights are
+needed.
+
+To add it to `PATH`, edit the user-scoped value directly rather than using
+`setx PATH "%PATH%;..."` — that one expands to the *merged* system and user
+`PATH`, writes the whole thing back into the user `PATH`, and silently truncates
+it at 1024 characters:
+
+```powershell
+$dir = "$env:LOCALAPPDATA\Programs\devsync"
+$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($user -notlike "*$dir*") {
+    [Environment]::SetEnvironmentVariable('Path', "$user;$dir", 'User')
+}
+```
+
+Open a new session and confirm the remote resolves it:
 
 ```bash
-scp target/release/devsync.exe '<host>:C:\tools\devsync.exe'
-ssh <host> "C:\tools\devsync.exe --help"
+ssh <host> "where devsync.exe"
 ```
 
 **Both sides must run the same build.** The handshake compares
 `PROTOCOL_VERSION` and refuses to continue on a mismatch, so after upgrading,
-redeploy the remote copy as well. The error names both versions when you forget.
+reinstall the remote copy as well. The error names both versions when you
+forget.
 
 ### 4. Configure the project
 
 Copy `devsync.toml.example` to `devsync.toml` in your project root and set
-`connection.host`, `connection.user`, `connection.agent_path` (where you put the
-remote binary), and `paths.remote_dir`. Then:
+`connection.host`, `connection.user`, and `paths.remote_dir`.
+
+`connection.agent_path` can be left out: it defaults to `devsync.exe`, which the
+remote resolves through `PATH`. Set it only if the agent lives somewhere off
+`PATH`. Then:
 
 ```bash
 devsync status

@@ -45,11 +45,19 @@ stray character here will break the protocol** — fix it before continuing.
 Local and remote must run the same build: `PROTOCOL_VERSION` is checked during
 the handshake and a mismatch is rejected by design.
 
+Follow the README's installation steps, which put the agent in
+`%LOCALAPPDATA%\Programs\devsync\` and on the user `PATH`. Then confirm the
+remote resolves it in a non-interactive session — this is what devsync itself
+gets, and it is not the same environment as an interactive login:
+
 ```bash
-cargo build --release
-scp target/release/devsync.exe '<host>:C:\tools\devsync.exe'
-ssh <host> "C:\tools\devsync.exe --help"
+ssh <host> "where devsync.exe"
+ssh <host> "devsync.exe --help"
 ```
+
+With the agent on `PATH`, `connection.agent_path` can be omitted from
+`devsync.toml`. Verifying that omission works is part of the check: it is the
+configuration the README tells users to write.
 
 ## Phase 3: Test project
 
