@@ -323,6 +323,63 @@ fn e2e_exec_reassembles_output_larger_than_one_chunk() {
     child.wait().ok();
 }
 
+// ── test 2e ────────────────────────────────────────────────────────────────
+
+/// Windows PowerShell encodes redirected output in the console code page, not
+/// UTF-8. Decoding it as UTF-8 replaced every non-ASCII character with U+FFFD,
+/// destroying Japanese build errors beyond recovery.
+///
+/// What this proves depends on the machine: where the console code page can
+/// represent the string (CP932, UTF-8) the exact text must survive; where it
+/// cannot, PowerShell substitutes '?' on the way out and there is nothing for
+/// the agent to get wrong. Replacement characters mean the agent misdecoded,
+/// and that must never happen.
+#[test]
+fn e2e_exec_decodes_non_ascii_output_in_the_console_encoding() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+
+    devsync::client::perform_handshake(&mut stdout, &mut stdin).expect("handshake");
+
+    let mut commands = BTreeMap::new();
+    commands.insert("jp".to_string(), "Write-Output \"日本語テスト\"".to_string());
+    protocol::write_message(
+        &mut stdin,
+        &Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands,
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+
+    protocol::write_message(&mut stdin, &Message::Exec { name: "jp".into() }).unwrap();
+
+    let mut collected = String::new();
+    loop {
+        match protocol::read_message(&mut stdout).unwrap() {
+            Message::Output { stream, data } if stream == "stdout" => collected.push_str(&data),
+            Message::Output { .. } => {}
+            Message::Exit { .. } => break,
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    }
+
+    assert!(
+        !collected.contains('\u{FFFD}'),
+        "replacement characters mean the console encoding was misdecoded; got: {collected:?}"
+    );
+    if !collected.contains('?') {
+        assert!(
+            collected.contains("日本語テスト"),
+            "this code page can represent the text, so it must survive intact; got: {collected:?}"
+        );
+    }
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
 // ── test 3 ─────────────────────────────────────────────────────────────────
 
 #[test]
