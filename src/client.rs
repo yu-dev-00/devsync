@@ -9,7 +9,16 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 /// Error or any other message.
 pub fn perform_handshake<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<()> {
     protocol::write_message(writer, &Message::Hello { version: protocol::PROTOCOL_VERSION })?;
-    match protocol::read_message(reader)? {
+    // A failed read here means the agent never answered — almost always a
+    // transport or deployment problem rather than a protocol one. The raw io
+    // error ("failed to fill whole buffer") is useless on its own, so name the
+    // two things worth checking. ssh.exe's own stderr is inherited and usually
+    // prints the underlying cause just above this message.
+    let response = protocol::read_message(reader).context(
+        "no response from the remote agent: check that ssh can reach the host and \
+         that connection.agent_path points at devsync.exe on the remote machine",
+    )?;
+    match response {
         Message::HelloAck { agent_version } if agent_version == protocol::PROTOCOL_VERSION => Ok(()),
         Message::HelloAck { agent_version } => {
             anyhow::bail!(
