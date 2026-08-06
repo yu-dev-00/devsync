@@ -33,6 +33,7 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 | [src/client.rs](src/client.rs) | spawns `ssh -p <port> user@host "<agent_path> agent --stdio"`, handshake, framed I/O |
 | [src/agent.rs](src/agent.rs) | remote message loop (config, manifest, file apply, delete, exec) |
 | [src/protocol.rs](src/protocol.rs) | `Message` enum + frame encode/decode, `PROTOCOL_VERSION` |
+| [src/verbose.rs](src/verbose.rs) | `-v` diagnostics: process-global flag + `vlog!`, stderr only |
 | [src/manifest.rs](src/manifest.rs) | walk a root, BLAKE3-hash every non-excluded file, sorted slash paths |
 | [src/hash_cache.rs](src/hash_cache.rs) | `<root>/.devsync/state` — reuse hashes for files unchanged since the last walk |
 | [src/diff.rs](src/diff.rs) | upload / delete / skip plan from two manifests |
