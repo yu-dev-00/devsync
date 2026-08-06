@@ -146,6 +146,15 @@ Both should name `agent_path` and the ssh connection as things to check.
 bumped and run it against the deployed agent. Expect
 `unsupported protocol version: N (agent supports M)`. Revert afterwards.
 
+**6. Non-ASCII command output.** Add a script that prints text in your language
+and run it through `devsync exec`. The text must arrive intact — replacement
+characters (`?`) mean the console code page was misdecoded.
+
+Save the script as **UTF-8 with BOM**. PowerShell 5.1 reads a BOM-less `.ps1`
+as ANSI, so a UTF-8 file without one is garbled at parse time, before devsync is
+involved. Getting this wrong produces output that looks *almost* right and hides
+whether the transport is actually correct.
+
 ## 2026-08-06 results
 
 All Phase 4 and Phase 5 checks passed, including binary integrity (SHA256 match
@@ -168,3 +177,10 @@ Output buffering was confirmed as a third limitation and then fixed in the same
 session: the agent now spawns the command and streams `Output` frames as they
 are produced. Re-verified on the same hardware — a script printing once a second
 arrives a line per second instead of in one burst after 6 seconds.
+
+A fourth defect surfaced from that work. The remote reports
+`[Console]::OutputEncoding` as `shift_jis / cp932`, while the agent decoded
+output as UTF-8, so Japanese build errors arrived as solid U+FFFD — unreadable
+and unrecoverable. Every check up to this point had used ASCII-only scripts and
+missed it entirely. Fixed by decoding in the console code page; verified with
+Japanese text surviving the round trip intact.
