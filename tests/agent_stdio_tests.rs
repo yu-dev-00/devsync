@@ -37,6 +37,52 @@ fn agent_rejects_mismatched_protocol_version() {
 }
 
 // Step 1: failing test – agent_writes_file_payload_under_remote_dir
+/// The SyncComplete ack used to hardcode uploaded=0, so `--verbose` reported
+/// that the agent wrote nothing even after a successful sync.
+#[test]
+fn agent_reports_how_many_files_it_wrote() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands: BTreeMap::new(),
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+    for (name, body) in [("one.txt", &b"first"[..]), ("two.txt", &b"second"[..])] {
+        protocol::write_message(
+            &mut input,
+            &protocol::Message::File {
+                path: name.into(),
+                size: body.len() as u64,
+                hash: blake3::hash(body).to_hex().to_string(),
+            },
+        )
+        .unwrap();
+        input.extend_from_slice(body);
+    }
+    protocol::write_message(
+        &mut input,
+        &protocol::Message::SyncPlan { upload: vec![], delete: vec![] },
+    )
+    .unwrap();
+
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+
+    let response = protocol::read_message(&mut Cursor::new(output)).unwrap();
+    match response {
+        protocol::Message::SyncComplete { uploaded, deleted, .. } => {
+            assert_eq!(uploaded, 2, "the ack must count the files actually written");
+            assert_eq!(deleted, 0);
+        }
+        other => panic!("unexpected response: {other:?}"),
+    }
+}
+
 #[test]
 fn agent_writes_file_payload_under_remote_dir() {
     let dir = tempfile::tempdir().unwrap();
