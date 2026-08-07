@@ -5,8 +5,8 @@ Everything specific to the real transport — binary payload integrity through
 `ssh.exe`, remote shell banner pollution, filesystem encoding on the remote —
 can only be verified here.
 
-Last executed: **2026-08-06** (local `sch-0066` → remote `pc-0141`). Results are
-recorded at the bottom.
+Last executed: **2026-08-06**, between two real Windows machines over OpenSSH.
+Results are recorded at the bottom.
 
 ## Phase 0: Remote prerequisites
 

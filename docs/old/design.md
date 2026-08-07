@@ -87,7 +87,7 @@ project/
 
 ```toml
 # 接続先
-host          = "192.168.1.20"
+host          = "192.0.2.10"
 port          = 22
 user          = "user"
 remote_dir    = "/home/user/work/project"

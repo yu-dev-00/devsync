@@ -81,7 +81,7 @@ project/
 set -e
 
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 
 rsync -av --delete \
@@ -133,7 +133,7 @@ rsync -av --delete \
 set -e
 
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 
 bash scripts/remote-sync.sh
@@ -168,7 +168,7 @@ ssh "${REMOTE_USER}@${REMOTE_HOST}" "
 set -e
 
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 
 ssh "${REMOTE_USER}@${REMOTE_HOST}" "
@@ -187,7 +187,7 @@ ssh "${REMOTE_USER}@${REMOTE_HOST}" "
 set -e
 
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 
 bash scripts/remote-sync.sh
@@ -208,7 +208,7 @@ ssh "${REMOTE_USER}@${REMOTE_HOST}" "
 set -e
 
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 
 mkdir -p ./logs
@@ -286,7 +286,7 @@ project/
 
 ```bash
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 ```
 
@@ -686,7 +686,7 @@ project/
 
 ```bash
 REMOTE_USER="user"
-REMOTE_HOST="192.168.1.20"
+REMOTE_HOST="192.0.2.10"
 REMOTE_DIR="/home/user/work/project"
 ```
 
