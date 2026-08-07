@@ -59,15 +59,108 @@ fn console_encoding() -> &'static encoding_rs::Encoding {
     encoding_rs::UTF_8
 }
 
-/// Decode one chunk, carrying any sequence split across the chunk boundary in
-/// the decoder's own state. Pass `last` at EOF to flush a truncated tail.
-fn decode_chunk(decoder: &mut encoding_rs::Decoder, bytes: &[u8], last: bool) -> String {
-    let mut decoded = String::with_capacity(
-        decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len().saturating_mul(4)),
-    );
-    // Capacity is sized for the whole input, so this consumes it in one call.
-    let (_result, _read, _had_errors) = decoder.decode_to_string(bytes, &mut decoded, last);
-    decoded
+/// Longest byte sequence any console code page needs for one character. The
+/// Windows DBCS code pages top out at two; the extra byte is slack.
+const MAX_CONSOLE_SEQUENCE: usize = 3;
+
+/// Decodes one output stream whose bytes may not all share an encoding.
+///
+/// Nothing forces the writers on a single pipe to agree. PowerShell encodes its
+/// own output in the console code page (CP932 on a Japanese install), and so do
+/// the classic console tools; anything built in Rust or Go — `uv`, `cargo`,
+/// `rustc` — writes UTF-8 unconditionally and never consults that setting. Both
+/// appeared in one run of one real project, so any single fixed encoding
+/// garbles half the output: reading everything as UTF-8 destroyed PowerShell's
+/// Japanese, and then reading everything as CP932 destroyed `uv`'s.
+///
+/// So the encoding is decided per line rather than configured: bytes that form
+/// valid UTF-8 are UTF-8, anything else is the console code page. The test is
+/// stable in the direction that matters, because the two readings of Shift-JIS
+/// only re-align every six bytes — a whole message staying accidentally valid
+/// UTF-8 by chance does not happen. Pure-ASCII lines decode identically either
+/// way, so a coin-flip verdict there costs nothing.
+///
+/// Every segment handed to `decode` is self-contained, which is what lets each
+/// one be judged on its own: a line ends at a terminator, which is never part
+/// of a character, and the unterminated tail holds back any bytes that a later
+/// chunk may complete. Nothing is carried in decoder state across a verdict.
+pub struct OutputDecoder {
+    console: &'static encoding_rs::Encoding,
+    pending: Vec<u8>,
+}
+
+impl OutputDecoder {
+    pub fn new(console: &'static encoding_rs::Encoding) -> Self {
+        Self { console, pending: Vec::new() }
+    }
+
+    /// Append a chunk and decode everything decodable so far.
+    pub fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut decoded = String::new();
+
+        // One line at a time: a single chunk can carry a UTF-8 line from `uv` and
+        // a console-code-page line from PowerShell back to back, and one verdict
+        // taken over both would garble whichever lost. 0x0A and 0x0D never appear
+        // inside a character in UTF-8 or in the DBCS console code pages, so this
+        // split is safe before the encoding is known.
+        while let Some(end) = self.pending.iter().position(|byte| *byte == b'\n' || *byte == b'\r') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            decoded.push_str(&self.decode(&line));
+        }
+
+        // Emit the unterminated remainder too, rather than holding it back until a
+        // newline that may be a whole build away — progress output that only
+        // rewrites one line has to keep streaming. Only a trailing sequence that
+        // the next chunk may complete stays behind.
+        let complete = self.pending.len() - self.incomplete_tail();
+        let tail: Vec<u8> = self.pending.drain(..complete).collect();
+        decoded.push_str(&self.decode(&tail));
+
+        decoded
+    }
+
+    /// Decode whatever is still held back. Anything left at EOF is truncated
+    /// rather than merely split, so it is reported instead of silently dropped.
+    pub fn finish(&mut self) -> String {
+        let tail: Vec<u8> = std::mem::take(&mut self.pending);
+        self.decode(&tail)
+    }
+
+    fn decode(&self, segment: &[u8]) -> String {
+        match std::str::from_utf8(segment) {
+            Ok(text) => text.to_string(),
+            Err(_) => self.console.decode_without_bom_handling(segment).0.into_owned(),
+        }
+    }
+
+    /// How many trailing bytes are a valid *prefix* of a character and might be
+    /// completed by the next chunk. Zero when the tail is complete.
+    fn incomplete_tail(&self) -> usize {
+        match std::str::from_utf8(&self.pending) {
+            // Complete as UTF-8, so `decode` will read it as UTF-8: nothing to wait for.
+            Ok(_) => 0,
+            // `error_len() == None` is precisely "ran out of input mid-sequence".
+            Err(error) if error.error_len().is_none() => self.pending.len() - error.valid_up_to(),
+            // Not UTF-8, so `decode` will read it in the console code page; ask how
+            // much of the tail that encoding is still waiting on. encoding_rs has no
+            // one-shot for this, so trim a byte at a time and see what stops the
+            // complaint. Over-trimming a byte that is simply invalid costs nothing:
+            // it is emitted with the next segment, or at `finish` regardless.
+            Err(_) => {
+                if !self.console.decode_without_bom_handling(&self.pending).1 {
+                    return 0;
+                }
+                let cap = MAX_CONSOLE_SEQUENCE.min(self.pending.len());
+                (1..=cap)
+                    .find(|trimmed| {
+                        let kept = &self.pending[..self.pending.len() - trimmed];
+                        !self.console.decode_without_bom_handling(kept).1
+                    })
+                    .unwrap_or(0)
+            }
+        }
+    }
 }
 
 pub fn run_stdio_agent() -> Result<()> {
@@ -249,8 +342,8 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 // sequence can straddle two reads. Each stream keeps its own decoder,
                 // which holds the partial sequence until the next chunk completes it.
                 let encoding = console_encoding();
-                let mut stdout_decoder = encoding.new_decoder();
-                let mut stderr_decoder = encoding.new_decoder();
+                let mut stdout_decoder = OutputDecoder::new(encoding);
+                let mut stderr_decoder = OutputDecoder::new(encoding);
 
                 for (stream, chunk) in receiver {
                     let decoder = if stream == "stderr" {
@@ -258,7 +351,7 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     } else {
                         &mut stdout_decoder
                     };
-                    let data = decode_chunk(decoder, &chunk, false);
+                    let data = decoder.push(&chunk);
                     if !data.is_empty() {
                         protocol::write_message(
                             &mut writer,
@@ -272,7 +365,7 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 for (stream, decoder) in
                     [("stdout", &mut stdout_decoder), ("stderr", &mut stderr_decoder)]
                 {
-                    let data = decode_chunk(decoder, b"", true);
+                    let data = decoder.finish();
                     if !data.is_empty() {
                         protocol::write_message(
                             &mut writer,

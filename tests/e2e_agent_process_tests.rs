@@ -380,6 +380,76 @@ fn e2e_exec_decodes_non_ascii_output_in_the_console_encoding() {
     child.wait().ok();
 }
 
+// ── test 2f ────────────────────────────────────────────────────────────────
+
+/// PowerShell is not the only thing writing to the pipe. Tools built in Rust or
+/// Go — `uv`, `cargo` — write UTF-8 straight to the handle no matter what the
+/// console code page is, so a real run mixes both encodings in one stream, and
+/// whichever one the agent fixes on destroys the other.
+///
+/// This drives both writers from a single command: raw UTF-8 bytes written to
+/// the standard output handle stand in for `uv`, and `Write-Output` produces
+/// console-code-page bytes. The UTF-8 half must survive on any machine; the
+/// PowerShell half is judged as in the test above, since a code page that
+/// cannot represent Japanese substitutes '?' before the agent ever sees it.
+#[test]
+fn e2e_exec_decodes_utf8_and_console_output_from_the_same_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+
+    devsync::client::perform_handshake(&mut stdout, &mut stdin).expect("handshake");
+
+    // 信頼 as UTF-8, then CRLF — written to the handle directly, bypassing
+    // PowerShell's own encoding exactly the way a Rust-built tool does.
+    let raw_utf8 = "$bytes = [byte[]](0xE4,0xBF,0xA1,0xE9,0xA0,0xBC,0x0D,0x0A); \
+                    $out = [Console]::OpenStandardOutput(); \
+                    $out.Write($bytes, 0, $bytes.Length); \
+                    $out.Flush()";
+    let mut commands = BTreeMap::new();
+    commands.insert("mixed".to_string(), format!("{raw_utf8}; Write-Output \"日本語テスト\""));
+    protocol::write_message(
+        &mut stdin,
+        &Message::Config {
+            remote_dir: dir.path().to_string_lossy().to_string(),
+            commands,
+            exclude: vec![],
+        },
+    )
+    .unwrap();
+
+    protocol::write_message(&mut stdin, &Message::Exec { name: "mixed".into() }).unwrap();
+
+    let mut collected = String::new();
+    loop {
+        match protocol::read_message(&mut stdout).unwrap() {
+            Message::Output { stream, data } if stream == "stdout" => collected.push_str(&data),
+            Message::Output { .. } => {}
+            Message::Exit { .. } => break,
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    }
+
+    assert!(
+        collected.contains("信頼"),
+        "UTF-8 written straight to the handle must survive whatever the code page is; \
+         got: {collected:?}"
+    );
+    assert!(
+        !collected.contains('\u{FFFD}'),
+        "replacement characters mean one of the two encodings was misdecoded; got: {collected:?}"
+    );
+    if !collected.contains('?') {
+        assert!(
+            collected.contains("日本語テスト"),
+            "this code page can represent PowerShell's own output, so it must survive \
+             alongside the UTF-8; got: {collected:?}"
+        );
+    }
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
 // ── test 3 ─────────────────────────────────────────────────────────────────
 
 #[test]
