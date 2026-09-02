@@ -7,6 +7,24 @@
 The same executable is both the local client and the remote agent, so it has to
 be installed on **both** machines.
 
+### 0. Optional: hand Claude Code the skill first
+
+The fiddly parts below — the login shell that must stay `cmd.exe`, the `PATH`
+edit that `setx` gets wrong, keeping both machines on the same build — are
+exactly what the bundled skill knows. It is normally installed by step 4, which
+is after you have already done them by hand. Copy it out of this checkout first
+and Claude Code can drive the rest of this section instead:
+
+```powershell
+$dst = "$env:USERPROFILE\.claude\skills\devsync"
+New-Item -ItemType Directory -Force $dst | Out-Null
+Copy-Item skills\devsync\SKILL.md $dst
+```
+
+This copy is a bootstrap, not a second distribution channel. Step 4 replaces it
+with the copy embedded in the binary you are about to build — and since both
+come from this same checkout, there is nothing to reconcile.
+
 ### 1. Remote: enable OpenSSH
 
 On the remote Windows machine, as administrator:
@@ -108,6 +126,11 @@ looks right, run `devsync sync`.
 `--install-skill` writes a skill to `~/.claude/skills/devsync/`, which teaches
 Claude Code to route builds through devsync rather than ssh'ing to the remote
 and building there — which quietly compiles whatever was synced last.
+
+The binary is the skill's source of truth: `include_str!` embeds it at build
+time, so an installed skill cannot describe a flag its own `devsync.exe` does
+not have. That is why step 0 is a copy out of the checkout you build from rather
+than a separate download, and why it ends by being overwritten.
 
 It installs once per user rather than per project, because it describes how
 devsync works, not what any one project does. A per-project copy would go stale

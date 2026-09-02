@@ -1,6 +1,6 @@
 ---
 name: devsync
-description: Build, run, and test a project on a remote Windows machine using the devsync CLI, which syncs the local source of truth to a remote execution copy over SSH and runs named commands there. Use this whenever the working directory contains a devsync.toml — including when the user just says "build it", "run the tests", or "does it compile" in such a project, since the build belongs on the remote machine rather than locally. Also use it when the user mentions building or running on another PC, a build machine, a GPU box, or "the remote", and when a devsync command fails and its error needs interpreting.
+description: Build, run, and test a project on a remote Windows machine using the devsync CLI, which syncs the local source of truth to a remote execution copy over SSH and runs named commands there. Use this whenever the working directory contains a devsync.toml — including when the user just says "build it", "run the tests", or "does it compile" in such a project, since the build belongs on the remote machine rather than locally. Also use it when the user mentions building or running on another PC, a build machine, a GPU box, or "the remote", and when a devsync command fails and its error needs interpreting. Use it for setup too: when a project has no devsync.toml yet but the user wants it built or run on another machine, and when devsync itself is not installed anywhere yet.
 ---
 
 # devsync
@@ -21,6 +21,82 @@ reason. Go through devsync and the code you just edited is the code that runs.
 **Do not edit files on the remote.** They are overwritten on the next sync, and
 `sync --delete` removes anything not in the local tree. If something needs
 fixing, fix it locally and sync.
+
+## Installing devsync
+
+Skip this whenever `devsync --help` works and the project has a `devsync.toml`.
+
+The same executable is both the local client and the remote agent, so it goes on
+**both** machines, and both must run the same build — the handshake compares
+protocol versions and refuses a mismatch.
+
+**1. Remote: OpenSSH server, login shell left alone.** As administrator on the
+remote machine:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+Leave the default shell as `cmd.exe`. The agent writes protocol frames and
+nothing else to stdout, so a PowerShell profile banner prepended to the stream
+corrupts the 4-byte frame length and surfaces as a handshake failure. No output
+from this means nothing is overridden:
+
+```powershell
+Get-ItemProperty "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -ErrorAction SilentlyContinue
+```
+
+**2. Key authentication, then prove it.** This must print exactly `ok` — no
+password prompt, no banner, not one stray character:
+
+```bash
+ssh <user>@<host> "echo ok"
+```
+
+**3. Build, and install on both machines.**
+
+```bash
+cargo build --release
+```
+
+Copy `target
+elease\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on each
+machine and put that directory on the user `PATH`. Do not reach for
+`setx PATH "%PATH%;..."`: `%PATH%` expands to the *merged* system and user value,
+which then gets written back into the user `PATH` and silently truncated at 1024
+characters. Edit the user-scoped value directly:
+
+```powershell
+$dir = "$env:LOCALAPPDATA\Programs\devsync"
+$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($user -notlike "*$dir*") {
+    [Environment]::SetEnvironmentVariable('Path', "$user;$dir", 'User')
+}
+```
+
+In a new session, confirm the remote resolves it:
+
+```bash
+ssh <host> "where devsync.exe"
+```
+
+**4. Configure the project.** From the project root:
+
+```bash
+devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill
+```
+
+That writes `devsync.toml`, adds `.devsync/` to `.gitignore` when the directory
+is a git repository, and installs this skill. Fill in `[commands]`, then run
+`devsync status` — it transfers nothing and shows what a sync would do — before
+the first `devsync sync`.
+
+**`--install-skill` overwrites this file, and finishing setup with it is the
+point.** The skill embedded in the binary is the only copy guaranteed to match
+the binary. A copy placed by hand — out of a git checkout, so this guidance
+exists before devsync does — is a bootstrap, and the binary's copy supersedes it.
 
 ## Start by reading devsync.toml
 
@@ -132,7 +208,11 @@ build step writing into a non-excluded source directory, for instance.
 
 ## When this does not apply
 
-No `devsync.toml` means the project does not build remotely; build it locally as
-usual. devsync targets Windows on both ends and syncs one way only, so it is not
+A project with no `devsync.toml` is not set up for remote builds yet. If the user
+wants it built or run on another machine, set it up — see *Installing devsync*
+above. If they did not ask for that, build locally as usual; devsync is not
+something to introduce uninvited.
+
+devsync targets Windows on both ends and syncs one way only, so it is not
 the tool for fetching artifacts or logs back from the remote — use `scp` for
 that.
