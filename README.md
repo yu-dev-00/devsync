@@ -4,6 +4,9 @@
 
 ## Installation
 
+Codex and Claude Code can both use devsync. The CLI embeds one shared skill;
+choose its installation target with `--skill-target codex`, `claude`, or `both`.
+
 The same executable is both the local client and the remote agent, so it has to
 be installed on **both** machines.
 
@@ -102,7 +105,7 @@ From the project root:
 devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill
 ```
 
-This writes `devsync.toml`, adds `.devsync/` to `.gitignore` when the directory
+This writes `.devsync/config.toml`, adds `.devsync/` to `.gitignore` when the directory
 is a git repository, and installs the Claude Code skill (see below). It refuses
 to overwrite an existing config unless you pass `--force`. The three connection
 flags are optional — omit them and edit the generated file instead.
@@ -110,6 +113,27 @@ flags are optional — omit them and edit the generated file instead.
 `connection.agent_path` is left out of the generated config on purpose: it
 defaults to `devsync.exe`, which the remote resolves through `PATH`. Set it only
 if the agent lives somewhere off `PATH`.
+
+The project layout is:
+
+```text
+.devsync/
+  config.toml   # environment-specific connection, commands, and exclusions
+  state         # machine-local hash cache
+```
+
+The whole `.devsync/` directory is excluded from Git and synchronization.
+Run devsync from the project root. In `.devsync/config.toml`, relative
+`local_dir` values are based on that root; `local_dir = "."` does not select
+`.devsync/`. An absolute `local_dir` is used unchanged.
+
+Existing projects with root `devsync.toml` keep working. The hidden config takes
+priority if both exist; an invalid hidden config produces an error rather than
+falling back. `init` also uses the existing legacy config when the hidden one
+is absent, so refreshing a skill does not create a competing config. To migrate,
+move the legacy config to `.devsync/config.toml` and add `.devsync/` to
+`.gitignore`. Relative paths in legacy and other custom config files retain
+working-directory-relative behavior.
 
 Fill in `[commands]` with whatever this project needs building and running with,
 then:
@@ -121,11 +145,25 @@ devsync status
 This transfers nothing; it prints what a sync *would* upload and delete. Once it
 looks right, run `devsync sync`.
 
-### The Claude Code skill
+### The Codex / Claude Code skill
 
-`--install-skill` writes a skill to `~/.claude/skills/devsync/`, which teaches
-Claude Code to route builds through devsync rather than ssh'ing to the remote
-and building there — which quietly compiles whatever was synced last.
+Choose the host when initializing a project:
+
+```powershell
+devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill --skill-target codex
+```
+
+| Selection | User-wide installation directory |
+| --- | --- |
+| `--skill-target codex` | `~/.agents/skills/devsync/` |
+| `--skill-target claude` | `~/.claude/skills/devsync/` |
+| `--skill-target both` | Both directories |
+
+`--skill-target` requires `--install-skill`. Omitting the target keeps the
+existing Claude Code default. The shared skill teaches either agent to sync
+current local code before executing remote builds. In Codex, invoke `$devsync`
+explicitly or let the agent select it for a matching request. Restart Codex if
+the newly installed skill does not appear.
 
 The binary is the skill's source of truth: `include_str!` embeds it at build
 time, so an installed skill cannot describe a flag its own `devsync.exe` does
@@ -136,9 +174,10 @@ It installs once per user rather than per project, because it describes how
 devsync works, not what any one project does. A per-project copy would go stale
 as devsync changes and keep advising behavior that no longer exists.
 
-Re-run `devsync init --install-skill` after upgrading to refresh it. That is safe
+Re-run `devsync init --install-skill --skill-target codex` after upgrading to
+refresh the Codex skill; use `claude` or `both` for the other targets. That is safe
 in a project that is already set up: with `--install-skill`, an existing
-`devsync.toml` is reported and left alone rather than treated as an error, so
+config is reported and left alone rather than treated as an error, so
 refreshing the skill never costs you your connection details or `[commands]`.
 
 `docs/manual-test.md` has a fuller checklist for verifying an installation,
@@ -147,7 +186,7 @@ including the failure modes that are easy to miss.
 ## Commands
 
 ```text
-devsync init                 # scaffold devsync.toml here; --install-skill adds the skill
+devsync init                 # scaffold .devsync/config.toml; --install-skill adds the skill
 devsync status
 devsync sync
 devsync sync --delete
@@ -160,7 +199,7 @@ devsync test                 # alias for: devsync exec test
 
 `build`, `run`, and `test` are convenience aliases for `exec <name>`. All execution commands (`exec`, `build`, `run`, `test`) sync first by default. Pass `--no-sync` to skip the sync step and execute against the current remote copy.
 
-`--config <path>` selects a config other than `./devsync.toml`, and `-v` /
+`--config <path>` selects an explicit config path without fallback, and `-v` /
 `--verbose` prints progress and protocol diagnostics. Both work on either side
 of the subcommand, so `devsync build -v` is fine.
 

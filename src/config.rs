@@ -6,6 +6,29 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub const DEFAULT_CONFIG_PATH: &str = ".devsync/config.toml";
+
+/// Prefer the private project configuration, retaining legacy projects as-is.
+pub fn default_path() -> Result<PathBuf> {
+    let preferred = PathBuf::from(DEFAULT_CONFIG_PATH);
+    if preferred.try_exists()? || !Path::new("devsync.toml").try_exists()? {
+        Ok(preferred)
+    } else {
+        Ok(PathBuf::from("devsync.toml"))
+    }
+}
+
+/// The hidden config lives one directory below the source project root.
+pub fn hidden_config_project_root(path: &Path) -> Option<&Path> {
+    let parent = path.parent()?;
+    if path.file_name()?.to_str()?.eq_ignore_ascii_case("config.toml")
+        && parent.file_name()?.to_str()?.eq_ignore_ascii_case(".devsync") {
+        Some(parent.parent().unwrap_or(Path::new(".")))
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -78,9 +101,14 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let cfg: Config = toml::from_str(&raw)
+        let mut cfg: Config = toml::from_str(&raw)
             .with_context(|| format!("failed to parse {}", path.display()))?;
         cfg.validate()?;
+        if cfg.paths.local_dir.is_relative() {
+            if let Some(root) = hidden_config_project_root(path) {
+                cfg.paths.local_dir = root.join(&cfg.paths.local_dir);
+            }
+        }
         Ok(cfg)
     }
 

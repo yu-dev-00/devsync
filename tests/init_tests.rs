@@ -1,8 +1,97 @@
 use devsync::{config::Config, init};
 use std::fs;
 
+#[test]
+fn cli_installs_selected_skills_and_preserves_existing_config() {
+    for (target, claude, codex) in [("claude", true, false), ("codex", false, true), ("both", true, true)] {
+        let project = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let config = project.path().join("devsync.toml");
+        fs::write(&config, "# existing settings\n").unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_devsync"))
+            .current_dir(project.path()).env("USERPROFILE", home.path()).env("HOME", home.path())
+            .args(["init", "--install-skill", "--skill-target", target]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(fs::read_to_string(&config).unwrap(), "# existing settings\n");
+        for (folder, expected) in [(".claude", claude), (".agents", codex)] {
+            let skill = home.path().join(folder).join("skills/devsync/SKILL.md");
+            assert_eq!(skill.exists(), expected, "{target}: {folder}");
+            if expected {
+                assert_eq!(fs::read_to_string(skill).unwrap(), include_str!("../skills/devsync/SKILL.md"));
+            }
+        }
+    }
+}
+
+#[test]
+fn cli_codex_install_initializes_project_and_refreshes_skill() {
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let skill = home.path().join(".agents/skills/devsync/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "stale").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_devsync"))
+        .current_dir(project.path()).env("USERPROFILE", home.path()).env("HOME", home.path())
+        .args(["init", "--install-skill", "--skill-target", "codex", "--host", "build-box", "--user", "alice"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(Config::load(&project.path().join(".devsync/config.toml")).unwrap().connection.host, "build-box");
+    assert_eq!(fs::read_to_string(skill).unwrap(), include_str!("../skills/devsync/SKILL.md"));
+}
+
+#[test]
+fn cli_rejects_skill_target_without_install_or_with_invalid_value() {
+    for args in [vec!["init", "--skill-target", "codex"], vec!["init", "--install-skill", "--skill-target", "unknown"]] {
+        let project = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(env!("CARGO_BIN_EXE_devsync"))
+            .current_dir(project.path()).env("USERPROFILE", home.path()).env("HOME", home.path())
+            .args(args).output().unwrap().status;
+        assert!(!status.success());
+        assert!(!project.path().join("devsync.toml").exists());
+        assert!(!project.path().join(".devsync/config.toml").exists());
+        assert!(!home.path().join(".agents").exists());
+    }
+}
+
 fn options() -> init::InitOptions {
     init::InitOptions::default()
+}
+
+#[test]
+fn cli_init_keeps_config_and_cache_under_ignored_directory() {
+    let project = tempfile::tempdir().unwrap();
+    std::process::Command::new("git").args(["init", "--quiet"]).current_dir(project.path()).status().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_devsync"))
+        .current_dir(project.path()).arg("init").output().unwrap();
+    assert!(output.status.success());
+    assert!(project.path().join(".devsync/config.toml").is_file());
+    assert!(!project.path().join("devsync.toml").exists());
+    fs::write(project.path().join(".devsync/state"), "cache").unwrap();
+    let output = std::process::Command::new("git").current_dir(project.path())
+        .args(["check-ignore", ".devsync/config.toml", ".devsync/state"]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn cli_config_selection_prefers_hidden_then_legacy_and_honors_override() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("devsync.toml"), "[connection]\nhost='legacy'\n").unwrap();
+    let invoke = |args: &[&str]| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_devsync"))
+            .current_dir(project.path()).args(args).output().unwrap();
+        assert!(!output.status.success());
+        String::from_utf8(output.stderr).unwrap()
+    };
+    assert!(!invoke(&["status"]).contains("connection.host"));
+    fs::create_dir(project.path().join(".devsync")).unwrap();
+    fs::write(project.path().join(".devsync/config.toml"), "[connection]\nuser='hidden'\n").unwrap();
+    let error = invoke(&["status"]);
+    assert!(error.contains("connection.host"));
+    assert!(!error.contains("connection.user"));
+    assert!(!invoke(&["status", "--config", "devsync.toml"]).contains("connection.host"));
+    assert!(invoke(&["status", "--config", "missing.toml"]).contains("missing.toml"));
 }
 
 /// The whole point of init is producing a config devsync can actually read, so

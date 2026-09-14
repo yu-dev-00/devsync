@@ -56,7 +56,7 @@ ssh <host> "devsync.exe --help"
 ```
 
 With the agent on `PATH`, `connection.agent_path` can be omitted from
-`devsync.toml`. Verifying that omission works is part of the check: it is the
+`.devsync/config.toml`. Verifying that omission works is part of the check: it is the
 configuration the README tells users to write.
 
 ## Phase 3: Test project
@@ -65,7 +65,7 @@ Create a local project. The contents matter — each item exists to exercise a
 specific failure mode:
 
 ```text
-devsync.toml          copied from devsync.toml.example, edited for your hosts
+.devsync/config.toml created by devsync init, edited for your hosts
 src/hello.txt         plain text, for the incremental-diff check
 src/テスト.txt        non-ASCII filename, for the path encoding check
 assets/blob.bin       binary, for the payload integrity check (see below)
@@ -89,9 +89,9 @@ so the output-buffering behavior below is observable.
 ## Phase 4: Core checks
 
 1. `devsync status` — every file listed as upload.
-2. Confirm `devsync.toml` and `.git` are **not** listed.
+2. Confirm `.devsync/config.toml`, legacy `devsync.toml`, and `.git` are **not** listed.
 3. `devsync sync` — uploads them.
-4. `ssh <host> "dir /s /b <remote_dir>"` — files present, `devsync.toml` / `.git` / `.devsync` absent.
+4. `ssh <host> "dir /s /b <remote_dir>"` — source files present, config and `.git` absent; `.devsync/state` is a remote-local cache.
 5. `devsync status` again — `upload: 0`, everything `skipped`. This also proves
    the non-ASCII filename round-tripped: a corrupted name would not match the
    remote manifest and would reappear as an upload.

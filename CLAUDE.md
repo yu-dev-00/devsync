@@ -16,7 +16,7 @@ cargo test
 cargo test --test agent_stdio_tests          # one integration test file
 cargo test agent_writes_file_payload         # one test by name
 cargo run -- --help
-cargo run -- status                          # needs ./devsync.toml (see devsync.toml.example)
+cargo run -- status                          # needs .devsync/config.toml or legacy devsync.toml (see devsync.toml.example)
 ```
 
 Tests spawn PowerShell and the built binary, so the suite is Windows-only in practice. No SSH or remote machine is required — cross-process E2E tests drive the agent's stdin/stdout directly. Real SSH behavior is verified by hand via [docs/manual-test.md](docs/manual-test.md).
@@ -28,8 +28,8 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 | Module | Responsibility |
 | --- | --- |
 | [src/main.rs](src/main.rs) | clap CLI, dispatch; loads config for every subcommand except `agent` and `init` |
-| [src/init.rs](src/init.rs) | `init` — scaffold `devsync.toml`, `.gitignore` entry, `--install-skill` |
-| [src/config.rs](src/config.rs) | `devsync.toml` parse, defaults, required-field validation, `commands.<name>` lookup |
+| [src/init.rs](src/init.rs) | `init` — scaffold `.devsync/config.toml`, `.gitignore` entry, `--install-skill` |
+| [src/config.rs](src/config.rs) | config selection, parse, defaults, required-field validation, `commands.<name>` lookup |
 | [src/sync.rs](src/sync.rs) | `status` / `sync` / `exec` / `run_command` flows |
 | [src/client.rs](src/client.rs) | spawns `ssh -p <port> user@host "<agent_path> agent --stdio"`, handshake, framed I/O |
 | [src/agent.rs](src/agent.rs) | remote message loop (config, manifest, file apply, delete, exec) |
@@ -50,7 +50,7 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 - **Excludes apply on both sides.** The agent builds its manifest with the same exclude list, so remote-only build output (`bin`, `obj`, `dist`, …) is invisible to the diff and `sync --delete` cannot remove it. Changing where excludes are applied changes what `--delete` destroys.
 - **Diff is content-hash based**, never mtime — intentional, to dodge Windows timestamp precision/timezone issues. The hash cache does compare mtime, but only against the timestamp *the same machine* recorded when it last hashed *that same file*; a local timestamp is never compared to a remote one. Do not "simplify" it into an mtime-based diff.
 - **Both sides cache hashes** in `<root>/.devsync/state`. `.devsync` is a forced exclude, so the cache is never uploaded and `sync --delete` never removes it — check that still holds if you touch the exclude list. A missing or corrupt cache must degrade to hashing everything, never fail the walk.
-- **`init` embeds its templates.** `devsync.toml.example` and `skills/devsync/SKILL.md` are pulled in with `include_str!`, because what gets installed is a lone `devsync.exe` with no source tree beside it. `render_config` fails loudly if a placeholder line it substitutes has disappeared from the example, so the two cannot drift silently. The skill installs to `~/.claude/skills/`, never per-project: it describes the tool, so copies would go stale as the tool changes.
+- **`init` embeds its templates.** `devsync.toml.example` and `skills/devsync/SKILL.md` are pulled in with `include_str!`, because what gets installed is a lone `devsync.exe` with no source tree beside it. `render_config` fails loudly if a placeholder line it substitutes has disappeared from the example, so the two cannot drift silently. `--install-skill --skill-target claude|codex|both` installs the same embedded skill under `~/.claude/skills/`, `~/.agents/skills/`, or both. Omitting the target retains the Claude Code default. Skills are user-wide, never per-project.
 - **Only named commands are executable.** `Exec { name }` resolves against the `commands` map the client sent; there is no arbitrary-command path, and a `shell` subcommand is deliberately out of scope.
 - **Execution syncs first.** `exec`/`build`/`run`/`test` all call `sync` unless `--no-sync`; `build`/`run`/`test` are pure aliases for `exec <name>`. Command names in `[commands]` are arbitrary and may collide with subcommand names (`devsync exec sync` runs `commands.sync`).
 - **`sync` waits for the `SyncComplete` ack** before returning, because `RemoteClient::Drop` kills the ssh child — dropping early would truncate pending writes. The exec arms in `main.rs` call `std::process::exit(code)` (skipping `Drop`) only after the `Exit` frame has arrived.
@@ -72,3 +72,5 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 - Paths on the wire are always slash-normalized relative strings; convert with `MAIN_SEPARATOR_STR` only at the filesystem boundary.
 - Work is spec- and plan-driven: [docs/superpowers/plans/2026-06-05-devsync-agent.md](docs/superpowers/plans/2026-06-05-devsync-agent.md) tracks tasks. Commits are conventional-style (`feat:`, `fix:`, `docs:`, `test:`, `harden:`) and scoped to one change.
 - Out of scope for this version: SFTP/rsync, daemon or TCP/HTTP server modes, Linux remotes, bidirectional sync, Git object storage, `logs`/`clean`/`shell` subcommands, permission/symlink preservation.
+
+- **Config placement:** new projects use `.devsync/config.toml`; the entire `.devsync/` directory (config and cache) stays out of Git and sync. Default selection prefers the hidden config and falls back to `devsync.toml` only when absent. `init` follows the same selection to preserve legacy configs. Relative local paths in the hidden config resolve from its project root; legacy/custom configs retain CWD semantics. Explicit `--config` never falls back.

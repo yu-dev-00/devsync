@@ -3,6 +3,18 @@ use std::fs;
 use devsync::config;
 
 #[test]
+fn hidden_config_resolves_local_paths_against_project_root() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir(project.path().join(".devsync")).unwrap();
+    let path = project.path().join(".devsync/config.toml");
+    for local in [".", "source"] {
+        fs::write(&path, format!("[connection]\nhost='box'\nuser='alice'\n[paths]\nlocal_dir='{local}'\nremote_dir='C:/work/app'\n")).unwrap();
+        let cfg = config::Config::load(&path).unwrap();
+        assert_eq!(cfg.paths.local_dir, project.path().join(local));
+    }
+}
+
+#[test]
 fn loads_defaults_and_required_fields() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("devsync.toml");

@@ -1,6 +1,6 @@
 ---
 name: devsync
-description: Build, run, and test a project on a remote Windows machine using the devsync CLI, which syncs the local source of truth to a remote execution copy over SSH and runs named commands there. Use this whenever the working directory contains a devsync.toml — including when the user just says "build it", "run the tests", or "does it compile" in such a project, since the build belongs on the remote machine rather than locally. Also use it when the user mentions building or running on another PC, a build machine, a GPU box, or "the remote", and when a devsync command fails and its error needs interpreting. Use it for setup too: when a project has no devsync.toml yet but the user wants it built or run on another machine, and when devsync itself is not installed anywhere yet.
+description: Build, run, and test Windows projects remotely over SSH using devsync. Use for projects with .devsync/config.toml or legacy devsync.toml, for requested remote build setup, or for troubleshooting devsync sync and execution failures. Supports Codex and Claude Code.
 ---
 
 # devsync
@@ -24,7 +24,7 @@ fixing, fix it locally and sync.
 
 ## Installing devsync
 
-Skip this whenever `devsync --help` works and the project has a `devsync.toml`.
+Skip this whenever `devsync --help` works and the project has `.devsync/config.toml` or legacy `devsync.toml`.
 
 The same executable is both the local client and the remote agent, so it goes on
 **both** machines, and both must run the same build — the handshake compares
@@ -61,8 +61,7 @@ ssh <user>@<host> "echo ok"
 cargo build --release
 ```
 
-Copy `target
-elease\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on each
+Copy `target\release\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on each
 machine and put that directory on the user `PATH`. Do not reach for
 `setx PATH "%PATH%;..."`: `%PATH%` expands to the *merged* system and user value,
 which then gets written back into the user `PATH` and silently truncated at 1024
@@ -85,20 +84,37 @@ ssh <host> "where devsync.exe"
 **4. Configure the project.** From the project root:
 
 ```bash
-devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill
+devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill --skill-target codex
 ```
 
-That writes `devsync.toml`, adds `.devsync/` to `.gitignore` when the directory
+Choose `--skill-target codex` for Codex, `claude` for Claude Code, or `both`
+when the user uses both. Omitting `--skill-target` preserves the original Claude
+Code default. Install only the requested host(s). The same embedded `SKILL.md`
+is installed to `~/.agents/skills/devsync/` for Codex and
+`~/.claude/skills/devsync/` for Claude Code. No per-project skill copy is needed.
+
+That writes `.devsync/config.toml`, adds `.devsync/` to `.gitignore` when the directory
 is a git repository, and installs this skill. Fill in `[commands]`, then run
 `devsync status` — it transfers nothing and shows what a sync would do — before
 the first `devsync sync`.
 
 **`--install-skill` overwrites this file, and finishing setup with it is the
-point.** The skill embedded in the binary is the only copy guaranteed to match
+point.** Refresh Codex with `devsync init --install-skill --skill-target codex`
+(or use `both` for both hosts). An existing config is preserved unless `--force`
+is supplied. In Codex the user can explicitly invoke `$devsync`; if discovery
+does not refresh, restart Codex. The skill embedded in the binary is the only copy guaranteed to match
 the binary. A copy placed by hand — out of a git checkout, so this guidance
 exists before devsync does — is a bootstrap, and the binary's copy supersedes it.
 
-## Start by reading devsync.toml
+## Start by reading .devsync/config.toml
+
+Use `.devsync/config.toml` when present, falling back to root `devsync.toml`
+for legacy projects. An explicit `--config` overrides selection. Run commands
+from the project root. Relative `local_dir` in `.devsync/config.toml` is resolved
+against the project root, not `.devsync/`; legacy/custom configs retain their
+working-directory-relative paths. `.devsync/` contains environment-specific
+config and hash cache, so exclude the whole directory from Git and sync.
+`init` preserves existing legacy setups rather than creating a second config.
 
 The config tells you what can be run and where things go. `[commands]` is the
 important part — it is the complete set of things devsync is allowed to execute
@@ -128,8 +144,8 @@ relative to it, not to anything local.
 ## Commands
 
 ```bash
-devsync status                  # what a sync would upload and delete; changes nothing
-devsync sync                    # upload changed files; never deletes
+devsync status                  # list planned uploads/deletes; may refresh hash caches
+devsync sync                    # upload changed files; preserve existing files
 devsync sync --delete           # also delete remote files absent locally
 devsync exec <name>             # sync, then run [commands].<name> remotely
 devsync exec <name> --no-sync   # run against whatever is on the remote now
@@ -138,7 +154,7 @@ devsync run                     # alias for: devsync exec run
 devsync test                    # alias for: devsync exec test
 ```
 
-`--config <path>` selects a config other than `./devsync.toml`.
+`--config <path>` selects an explicit config without fallback.
 
 After editing code, `devsync build` is all you need — it syncs first. Running
 `devsync sync && devsync build` works but does the sync twice.
@@ -160,14 +176,14 @@ There is no arbitrary-command path — `exec` resolves names against `[commands]
 and nothing else. That is a deliberate security boundary, not a gap to work
 around, so do not reach for `ssh` when a command is missing.
 
-The right move is to add the entry to `[commands]` in `devsync.toml`:
+The right move is to add the entry to `[commands]` in the selected config:
 
 ```toml
 [commands]
 lint = "cargo clippy -- -D warnings"
 ```
 
-Then `devsync exec lint`. Since `devsync.toml` is itself never synced, adding a
+Then `devsync exec lint`. Since the config is excluded from sync, adding a
 command takes effect immediately with no redeploy.
 
 Command names are arbitrary and may collide with subcommands: `devsync exec sync`
@@ -180,9 +196,9 @@ diff on the remote too, which is what keeps `sync --delete` from wiping remote
 build output like `target/` or `obj/`. `devsync.toml`, `.git/`, and `.devsync/`
 are always excluded.
 
-`sync --delete` is the one command here that destroys data. Plain `sync` never
-deletes, so prefer it, and confirm with the user before using `--delete` unless
-they asked for it. Run `status` first — it lists exactly what would be deleted.
+`sync --delete` is the one command here that destroys data. Plain `sync` retains remote-only files and updates matching files; use `--delete` only within the user's
+authorized scope. File/directory replacements may remove empty directories,
+but retained files and excluded directories block replacement. Run `status` first — it lists exactly what would be deleted.
 
 If a remote-only file keeps getting deleted that shouldn't be, the fix is an
 exclude entry, not avoiding `--delete`.
@@ -208,7 +224,8 @@ build step writing into a non-excluded source directory, for instance.
 
 ## When this does not apply
 
-A project with no `devsync.toml` is not set up for remote builds yet. If the user
+A project with neither `.devsync/config.toml` nor legacy `devsync.toml` is not
+set up for remote builds yet. If the user
 wants it built or run on another machine, set it up — see *Installing devsync*
 above. If they did not ask for that, build locally as usual; devsync is not
 something to introduce uninvited.

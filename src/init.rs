@@ -1,5 +1,5 @@
-//! `devsync init` — scaffold a project's `devsync.toml`, and optionally install
-//! the Claude Code skill.
+//! `devsync init` — scaffold a project's `.devsync/config.toml`, and optionally install
+//! the shared Claude Code / Codex skill.
 //!
 //! The config template is embedded rather than read from disk because
 //! `devsync.toml.example` ships in the source tree, while what gets installed is
@@ -18,9 +18,16 @@ use std::path::{Path, PathBuf};
 const CONFIG_TEMPLATE: &str = include_str!("../devsync.toml.example");
 const SKILL: &str = include_str!("../skills/devsync/SKILL.md");
 
-/// The cache lives here and is machine-local; committing it would put one
-/// machine's timestamps in everyone's history.
+/// Config and cache are machine-local and must both stay out of Git.
 const GITIGNORE_ENTRY: &str = ".devsync/";
+
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum SkillTarget {
+    #[default]
+    Claude,
+    Codex,
+    Both,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct InitOptions {
@@ -29,6 +36,7 @@ pub struct InitOptions {
     pub remote_dir: Option<String>,
     pub force: bool,
     pub install_skill: bool,
+    pub skill_target: SkillTarget,
 }
 
 pub fn run(config_path: &Path, options: &InitOptions) -> Result<()> {
@@ -58,7 +66,8 @@ pub fn run(config_path: &Path, options: &InitOptions) -> Result<()> {
         true
     };
 
-    let project_dir = config_path.parent().unwrap_or(Path::new("."));
+    let project_dir = crate::config::hidden_config_project_root(config_path)
+        .unwrap_or_else(|| config_path.parent().unwrap_or(Path::new(".")));
     match update_gitignore(project_dir)? {
         GitignoreOutcome::Added(path) => println!("added {GITIGNORE_ENTRY} to {}", path.display()),
         GitignoreOutcome::AlreadyPresent => {}
@@ -66,9 +75,10 @@ pub fn run(config_path: &Path, options: &InitOptions) -> Result<()> {
     }
 
     if options.install_skill {
-        let installed = install_skill(&home_dir()?)?;
-        println!("installed the Claude Code skill to {}", installed.display());
-        println!("  (re-run with --install-skill after upgrading devsync to refresh it)");
+        for installed in install_skills(&home_dir()?, options.skill_target)? {
+            println!("installed the devsync skill to {}", installed.display());
+        }
+        println!("  (re-run with --install-skill and the same --skill-target after upgrading to refresh)");
     }
 
     if !wrote_config {
@@ -159,7 +169,20 @@ fn update_gitignore(project_dir: &Path) -> Result<GitignoreOutcome> {
 
 /// Takes the home directory as a parameter so tests never write into the real one.
 pub fn install_skill(home: &Path) -> Result<PathBuf> {
-    let directory = home.join(".claude").join("skills").join("devsync");
+    install_skill_in(home, ".claude")
+}
+
+pub fn install_skills(home: &Path, target: SkillTarget) -> Result<Vec<PathBuf>> {
+    let folders: &[&str] = match target {
+        SkillTarget::Claude => &[".claude"],
+        SkillTarget::Codex => &[".agents"],
+        SkillTarget::Both => &[".claude", ".agents"],
+    };
+    folders.iter().map(|folder| install_skill_in(home, folder)).collect()
+}
+
+fn install_skill_in(home: &Path, folder: &str) -> Result<PathBuf> {
+    let directory = home.join(folder).join("skills").join("devsync");
     std::fs::create_dir_all(&directory)
         .with_context(|| format!("failed to create {}", directory.display()))?;
     let path = directory.join("SKILL.md");

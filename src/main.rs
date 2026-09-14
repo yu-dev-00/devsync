@@ -9,8 +9,9 @@ use std::path::PathBuf;
 struct Cli {
     // `global` so these work on either side of the subcommand. `devsync build -v`
     // is what people actually type; without it clap rejects the flag there.
-    #[arg(long, default_value = "devsync.toml", global = true)]
-    config: PathBuf,
+    /// Config path (default: .devsync/config.toml, falling back to devsync.toml)
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
 
     /// Print local progress and protocol diagnostics to stderr
     #[arg(short, long, global = true)]
@@ -22,7 +23,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Create devsync.toml in this project (and optionally install the skill)
+    /// Create .devsync/config.toml (preserves legacy projects; optionally installs skills)
     Init(InitArgs),
     Status,
     Sync(SyncArgs),
@@ -51,9 +52,12 @@ struct InitArgs {
     /// Overwrite an existing config
     #[arg(long)]
     force: bool,
-    /// Also install the Claude Code skill into ~/.claude/skills/devsync
+    /// Also install the shared devsync skill (Claude Code by default)
     #[arg(long)]
     install_skill: bool,
+    /// Skill host: Claude Code (~/.claude/skills), Codex (~/.agents/skills), or both
+    #[arg(long, value_enum, requires = "install_skill")]
+    skill_target: Option<init::SkillTarget>,
 }
 
 #[derive(Debug, Args)]
@@ -86,24 +90,33 @@ struct AgentArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     verbose::set_enabled(cli.verbose);
+    let config_path = if matches!(&cli.command, Command::Agent(_)) {
+        PathBuf::new()
+    } else {
+        match cli.config {
+            Some(path) => path,
+            None => config::default_path()?,
+        }
+    };
 
     // `init` is what creates the config, so requiring one would make it unusable
     // in exactly the situation it exists for.
     let cfg = if matches!(&cli.command, Command::Agent(_) | Command::Init(_)) {
         None
     } else {
-        Some(config::Config::load(&cli.config)?)
+        Some(config::Config::load(&config_path)?)
     };
     match cli.command {
         Command::Init(args) => {
             init::run(
-                &cli.config,
+                &config_path,
                 &init::InitOptions {
                     host: args.host,
                     user: args.user,
                     remote_dir: args.remote_dir,
                     force: args.force,
                     install_skill: args.install_skill,
+                    skill_target: args.skill_target.unwrap_or_default(),
                 },
             )?;
         }
