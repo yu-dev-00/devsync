@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::path_safety::{is_same_or_descendant, PathKey};
 
 const FORCED_EXCLUDES: &[&str] = &["devsync.toml", ".devsync", ".git"];
 
@@ -20,6 +21,8 @@ impl ExcludeMatcher {
 }
 
 fn matches_pattern(path: &str, pattern: &str) -> bool {
-    let pattern = pattern.trim_matches('/').replace('\\', "/");
-    path == pattern || path.starts_with(&format!("{pattern}/")) || path.split('/').any(|part| part == pattern)
+    let pattern = pattern.replace('\\', "/");
+    let pattern = pattern.trim_matches('/');
+    is_same_or_descendant(path, pattern)
+        || path.split('/').any(|part| PathKey::new(part) == PathKey::new(pattern))
 }

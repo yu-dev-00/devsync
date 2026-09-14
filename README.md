@@ -193,7 +193,8 @@ subcommand is fine: `devsync exec sync` runs `commands.sync`, not `devsync sync`
 
 Commands run with `remote_dir` as the working directory, and their output
 streams back as it is produced. The remote command's own exit code becomes
-devsync's exit code.
+devsync's exit code. A failing PowerShell cmdlet or command lookup returns a
+nonzero code even when no native program supplied an exit code.
 
 See `devsync.toml.example` for the full set of configuration options.
 
@@ -216,6 +217,15 @@ local upload scan and the remote agent's manifest. Excluded paths such as `bin`,
 remote side too, so `--delete` will **not** remove them — build outputs produced on
 the remote machine are preserved.
 
+Path comparisons and exclude matching ignore case using Windows ordinal rules,
+so `DEVSYNC.TOML` is also excluded and a case-only rename cannot cause the
+uploaded file to be deleted. Existing remote spelling may be retained.
+
 Forced excludes (`devsync.toml`, `.git/`, `.devsync/`) are always protected. Plain
-`devsync sync` (without `--delete`) never deletes anything; use `--delete` when you
+`devsync sync` (without `--delete`) never deletes existing files; use `--delete` when you
 want the remote copy to mirror the local, non-excluded file set exactly.
+
+When a file becomes a directory or a directory becomes a file, `--delete`
+removes the conflicting tracked files before uploading the replacement. Empty
+directories at the replacement path are removed as needed. Excluded files and
+directories are preserved; if they block a replacement, sync fails.

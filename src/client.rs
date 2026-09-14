@@ -106,6 +106,10 @@ impl RemoteClient {
     pub fn read(&mut self) -> Result<Message> {
         protocol::read_message(&mut self.reader)
     }
+
+    pub(crate) fn streams(&mut self) -> (&mut impl Read, &mut impl Write) {
+        (&mut self.reader, &mut self.writer)
+    }
 }
 
 impl Drop for RemoteClient {

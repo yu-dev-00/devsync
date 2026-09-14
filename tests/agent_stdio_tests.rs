@@ -4,6 +4,29 @@ use std::io::Cursor;
 use devsync::{agent, protocol};
 
 #[test]
+fn agent_replaces_an_empty_directory_tree_after_authorized_deletes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("item/nested")).unwrap();
+    std::fs::write(dir.path().join("item/nested/old.txt"), "old").unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Config {
+        remote_dir: dir.path().to_string_lossy().into_owned(),
+        commands: BTreeMap::new(), exclude: vec![],
+    }).unwrap();
+    protocol::write_message(&mut input, &protocol::Message::SyncPlan {
+        upload: vec![], delete: vec!["item/nested/old.txt".into()],
+    }).unwrap();
+    protocol::write_message(&mut input, &protocol::Message::File {
+        path: "item".into(), size: 3, hash: blake3::hash(b"new").to_hex().to_string(),
+    }).unwrap();
+    input.extend_from_slice(b"new");
+    let mut output = Vec::new();
+    let result = agent::run_agent(Cursor::new(input), &mut output);
+    assert!(result.is_ok(), "replacement failed: {result:?}");
+    assert_eq!(std::fs::read(dir.path().join("item")).unwrap(), b"new");
+}
+
+#[test]
 fn agent_accepts_matching_protocol_version() {
     let mut input = Vec::new();
     protocol::write_message(

@@ -15,7 +15,7 @@ thiserror = "1"
 toml = "0.8"
 walkdir = "2"
 
-# Only needed to ask Windows which code page console programs write in.
+# Windows console code pages and ordinal case-insensitive path comparison.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Globalization", "Win32_System_Console"] }
 

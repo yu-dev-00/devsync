@@ -1,8 +1,34 @@
 use crate::{exclude::ExcludeMatcher, manifest, path_safety, protocol::{self, Message}};
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// A directory may become a file only after its files were explicitly deleted.
+/// Inspect the whole tree before removing anything, and never follow links or
+/// recursively delete files (including excluded artifacts and concurrent writes).
+fn remove_empty_directory_tree(root: &Path, target: &Path, excludes: &ExcludeMatcher) -> Result<()> {
+    let canonical_root = root.canonicalize()?;
+    let canonical_target = target.canonicalize()?;
+    if canonical_target == canonical_root || !canonical_target.starts_with(&canonical_root) {
+        bail!("replacement directory is outside remote_dir: {}", target.display());
+    }
+    let mut directories = Vec::new();
+    for entry in walkdir::WalkDir::new(target).follow_links(false).contents_first(true) {
+        let entry = entry?;
+        let relative = path_safety::normalize_relative_path(entry.path().strip_prefix(root)?)?;
+        if !entry.file_type().is_dir() || excludes.is_excluded(&relative) {
+            bail!("cannot replace directory {}: retained or excluded path {} (use --delete for tracked files)",
+                target.display(), entry.path().display());
+        }
+        directories.push(entry.into_path());
+    }
+    for directory in directories {
+        std::fs::remove_dir(&directory)
+            .with_context(|| format!("cannot remove nonempty replacement directory {}", directory.display()))?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 struct AgentConfig {
@@ -251,6 +277,10 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     continue;
                 }
                 let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if target.is_dir() {
+                    let excludes = ExcludeMatcher::new(config.exclude.clone())?;
+                    remove_empty_directory_tree(&config.remote_dir, &target, &excludes)?;
+                }
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -302,13 +332,12 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     continue;
                 };
 
-                // PowerShell's `-Command` does not forward a native child process's exit
-                // code: every non-zero result collapses to 1, so `cargo build` failing
-                // with 101 (or a script calling `exit 3`) would be reported as 1. An
-                // explicit trailing `exit $LASTEXITCODE` propagates the real code. When
-                // the command ran no native process $LASTEXITCODE is $null, and
-                // `exit $null` yields 0, so successful runs are unaffected.
-                let wrapped_command = format!("{command}; exit $LASTEXITCODE");
+                // Preserve native exit codes, but a failing cmdlet/command lookup
+                // has no native code (or leaves a previous zero). Test $? before
+                // another statement overwrites it. A newline also ends comments.
+                let wrapped_command = format!(
+                    "{command}\nif (-not $?) {{ if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; exit 1 }}\nexit $LASTEXITCODE"
+                );
 
                 // stdin MUST be null: the agent's own stdin is the protocol stream, and
                 // an inherited handle would let the child consume frames meant for us.

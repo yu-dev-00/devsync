@@ -71,3 +71,42 @@ fn build_manifest_errors_on_missing_root() {
 
     assert!(result.is_err(), "expected build_manifest to error on an unreadable/missing root");
 }
+
+#[test]
+fn case_only_rename_never_deletes_the_uploaded_file() {
+    for (old, new) in [("Src/Foo.txt", "src/foo.txt"), ("École.txt", "école.txt")] {
+        let local = manifest::Manifest { files: vec![manifest::ManifestEntry {
+            path: new.into(), size: 3, hash: "new".into(),
+        }] };
+        let remote = manifest::Manifest { files: vec![manifest::ManifestEntry {
+            path: old.into(), size: 3, hash: "old".into(),
+        }] };
+        let plan = diff::calculate_diff(&local, &remote, true);
+        assert_eq!(plan.upload, vec![new]);
+        assert!(plan.delete.is_empty(), "must not delete the same Windows path: {plan:?}");
+        let mut unchanged = remote.clone();
+        unchanged.files[0].hash = "new".into();
+        let plan = diff::calculate_diff(&local, &unchanged, true);
+        assert!(plan.upload.is_empty());
+        assert_eq!(plan.skipped, 1);
+    }
+}
+
+#[test]
+fn excludes_follow_windows_case_rules_and_component_boundaries() {
+    let matcher = exclude::ExcludeMatcher::new(vec!["bin".into(), "Build/Output".into()]).unwrap();
+    for path in ["DEVSYNC.TOML", ".GIT/config", ".DEVSYNC/state", "src/BIN/a.dll", "build/OUTPUT/a.txt"] {
+        assert!(matcher.is_excluded(path), "must exclude {path}");
+    }
+    for path in ["devsync.toml.example", "binary/a.txt", "build/output-extra/a.txt"] {
+        assert!(!matcher.is_excluded(path), "must retain {path}");
+    }
+}
+
+#[test]
+fn uppercase_config_never_enters_a_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("DEVSYNC.TOML"), "private config").unwrap();
+    let matcher = exclude::ExcludeMatcher::new(vec![]).unwrap();
+    assert!(manifest::build_manifest(dir.path(), &matcher).unwrap().files.is_empty());
+}

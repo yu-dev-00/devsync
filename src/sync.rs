@@ -4,9 +4,12 @@ use crate::{
     diff,
     exclude::ExcludeMatcher,
     manifest::{self, Manifest},
-    protocol::Message,
+    path_safety::{is_same_or_descendant, validate_relative_path},
+    protocol::{self, Message},
 };
 use anyhow::{bail, Result};
+use std::io::{Read, Write};
+use std::path::Path;
 
 /// Read a file under `local_dir` (relative slash path) and build a `File`
 /// message whose `size` and `hash` are derived from the bytes actually read,
@@ -83,44 +86,78 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
         plan.skipped
     );
 
+    let (reader, writer) = client.streams();
+    let (uploaded, deleted) = apply_plan(&config.paths.local_dir, &plan, reader, writer)?;
+    println!("uploaded: {uploaded}");
+    println!("deleted: {deleted}");
+    println!("skipped: {}", plan.skipped);
+
+    Ok(())
+}
+
+/// Apply a content diff over an established, configured agent connection.
+pub fn apply_plan<R: Read, W: Write>(
+    local_dir: &Path,
+    plan: &diff::SyncPlan,
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(usize, usize)> {
+    // Only explicitly planned deletions may clear a file/directory collision.
+    // Keep unrelated deletions after uploads, as before. Acknowledge the first
+    // batch before sending bytes so neither stale errors nor counts leak across.
+    for path in plan.upload.iter().chain(&plan.delete) {
+        validate_relative_path(path)?;
+    }
+    let (blocking, remaining): (Vec<_>, Vec<_>) = plan.delete.iter().cloned().partition(|deleted| {
+        plan.upload.iter().any(|uploaded| {
+            is_same_or_descendant(deleted, uploaded) || is_same_or_descendant(uploaded, deleted)
+        })
+    });
+    let mut deleted_before_upload = 0;
+    if !blocking.is_empty() {
+        let (_, deleted) = finish_batch(reader, writer, blocking)?;
+        deleted_before_upload = deleted;
+    }
+
     // NOTE (v1 limitation): file uploads are sent fire-and-forget; per-file
     // agent responses (e.g. a hash-mismatch Error) are not read here. Such an
     // Error is surfaced when the SyncComplete ack is read below, where it causes
     // the sync to bail. A future version should read per-file acknowledgements.
     for path in &plan.upload {
-        let (message, bytes) = build_file_message(&config.paths.local_dir, path)?;
+        let (message, bytes) = build_file_message(local_dir, path)?;
         crate::vlog!("uploading {path} ({} bytes)", bytes.len());
-        client.write(&message)?;
-        client.raw_write_all(&bytes)?;
+        protocol::write_message(writer, &message)?;
+        writer.write_all(&bytes)?;
+        writer.flush()?;
     }
-    for path in &plan.delete {
+    let (uploaded, deleted) = finish_batch(reader, writer, remaining)?;
+    Ok((uploaded, deleted_before_upload + deleted))
+}
+
+fn finish_batch<R: Read, W: Write>(reader: &mut R, writer: &mut W, delete: Vec<String>) -> Result<(usize, usize)> {
+    for path in &delete {
         crate::vlog!("deleting {path}");
     }
 
-    client.write(&Message::SyncPlan {
+    protocol::write_message(writer, &Message::SyncPlan {
         upload: Vec::new(),
-        delete: if delete { plan.delete.clone() } else { Vec::new() },
+        delete,
     })?;
 
     // Wait for the agent to confirm it has processed all uploads and deletes
     // before the connection is dropped (Drop kills the ssh child). Reading the
     // SyncComplete ack guarantees the agent flushed every file write to disk.
-    match client.read()? {
+    match protocol::read_message(reader)? {
         // Only the agent's own counts are echoed here. `skipped` is excluded on
         // purpose: it is decided locally, so the agent always reports 0 and
         // printing it would look like a discrepancy.
         Message::SyncComplete { uploaded, deleted, .. } => {
             crate::vlog!("agent acked: wrote {uploaded} file(s), deleted {deleted}");
+            Ok((uploaded, deleted))
         }
         Message::Error { message } => bail!(message),
         other => bail!("unexpected response to sync_plan: {other:?}"),
     }
-
-    println!("uploaded: {}", plan.upload.len());
-    println!("deleted: {}", if delete { plan.delete.len() } else { 0 });
-    println!("skipped: {}", plan.skipped);
-
-    Ok(())
 }
 
 pub fn exec(config: &Config, name: &str) -> Result<i32> {

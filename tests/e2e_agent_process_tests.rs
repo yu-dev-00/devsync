@@ -4,6 +4,29 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use devsync::protocol::{self, Message};
 
+#[test]
+fn e2e_exec_reports_powershell_failures_without_a_native_exit_code() {
+    for command in ["Get-Item ./missing-review-file", "cmd /c exit 0; Get-Item ./missing-review-file", "missing_devsync_command"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut child, mut stdin, mut stdout) = spawn_agent();
+        protocol::write_message(&mut stdin, &Message::Config {
+            remote_dir: dir.path().to_string_lossy().into_owned(),
+            commands: BTreeMap::from([("fail".into(), command.into())]), exclude: vec![],
+        }).unwrap();
+        protocol::write_message(&mut stdin, &Message::Exec { name: "fail".into() }).unwrap();
+        let code = loop {
+            match protocol::read_message(&mut stdout).unwrap() {
+                Message::Output { .. } => {},
+                Message::Exit { code } => break code,
+                other => panic!("unexpected response: {other:?}"),
+            }
+        };
+        child.kill().ok();
+        child.wait().ok();
+        assert_ne!(code, 0, "failed command reported success: {command}");
+    }
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 fn spawn_agent() -> (Child, ChildStdin, ChildStdout) {
