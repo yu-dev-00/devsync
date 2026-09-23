@@ -19,7 +19,7 @@ The system has two roles in one executable:
 
 ```text
 Local devsync.exe
-  - reads devsync.toml
+  - reads .devsync/config.toml (or legacy devsync.toml)
   - scans the local project
   - launches ssh.exe
   - starts the remote agent through SSH
@@ -42,11 +42,21 @@ The local process starts the remote agent with Windows OpenSSH:
 ssh -p <port> <user>@<host> "<agent_path> agent --stdio"
 ```
 
-The remote agent does not read `devsync.toml`. The local configuration is the source of truth and is sent over the protocol after connection setup.
+The remote agent does not read the config file. The local configuration is the source of truth and is sent over the protocol after connection setup.
 
 ## 3. Commands
 
-Initial commands:
+Commands:
+
+```text
+devsync init [--host <host>] [--user <user>] [--remote-dir <dir>] [--force]
+             [--install-skill [--skill-target claude|codex|both]]
+```
+
+Scaffold `.devsync/config.toml` from the embedded example and add `.devsync/`
+to `.gitignore`. An existing legacy `devsync.toml` is preserved instead.
+`--install-skill` installs the embedded agent skill user-wide under
+`~/.claude/skills/` (default), `~/.agents/skills/` (Codex), or both.
 
 ```text
 devsync status
@@ -71,7 +81,7 @@ devsync exec <name>
 ```
 
 Run `sync`, then ask the remote agent to execute the command registered as
-`commands.<name>` in `devsync.toml`. Any configured name can be executed;
+`commands.<name>` in the config. Any configured name can be executed;
 only configured names can be executed.
 
 ```text
@@ -91,10 +101,10 @@ stale remote code is the exception and must be requested explicitly:
 --no-sync    Skip the sync step and execute against the current remote copy.
 ```
 
-Initial global options:
+Global options:
 
 ```text
---config <path>  Use a config file other than ./devsync.toml.
+--config <path>  Use this config file; never falls back to another.
 -v, --verbose    Print detailed local progress and protocol diagnostics.
 ```
 
@@ -103,7 +113,7 @@ Deferred commands and options:
 - `logs`
 - `clean`
 - `shell` (deliberately excluded: arbitrary remote execution would break the
-  named-command-only security model; register commands in `devsync.toml` instead)
+  named-command-only security model; register commands in `[commands]` instead)
 - `watch` / `dev` auto-sync loop (requires a long-lived connection; revisit
   after the initial scope is proven)
 - daemon or TCP server mode
@@ -111,11 +121,15 @@ Deferred commands and options:
 
 ## 4. Configuration
 
-Default config file:
+Config selection:
 
-```text
-./devsync.toml
-```
+1. `--config <path>` when given.
+2. Otherwise `.devsync/config.toml` in the current directory.
+3. Otherwise the legacy `./devsync.toml`.
+
+The whole `.devsync/` directory (config and hash cache) stays out of Git and
+sync. Relative local paths in `.devsync/config.toml` resolve from the project
+root; legacy and custom configs resolve them from the current directory.
 
 Example:
 
@@ -207,9 +221,11 @@ size  File size in bytes.
 hash  BLAKE3 content hash.
 ```
 
-Modification time is not used for initial diffing. Hash-based comparison is slower than mtime comparison, but avoids Windows timestamp precision and timezone issues.
+Modification time is never used for diffing. Hash-based comparison avoids Windows timestamp precision and timezone issues.
 
-Future optimization may add `.devsync/state` cache files to avoid rehashing unchanged files.
+Each side caches hashes in `<root>/.devsync/state` to avoid rehashing unchanged files. The cache compares a file's mtime only against the timestamp the same machine recorded when it last hashed that file; a missing or corrupt cache degrades to hashing everything.
+
+Paths compare case-insensitively (Windows identity), so a case-only rename never schedules deletion of the same file.
 
 ## 6. Protocol
 
@@ -223,11 +239,12 @@ Frame format:
 
 JSON messages are UTF-8. Binary file content follows only messages that declare a payload size.
 
-Initial message types:
+Message types (`PROTOCOL_VERSION` in `src/protocol.rs` is authoritative):
 
 ```json
-{"type":"hello","version":1}
-{"type":"config","remote_dir":"C:\\work\\project","commands":{"build":"...","run":"...","test":"..."}}
+{"type":"hello","version":3}
+{"type":"hello_ack","agent_version":3}
+{"type":"config","remote_dir":"C:\\work\\project","commands":{"build":"...","run":"...","test":"..."},"exclude":["bin","obj"]}
 {"type":"manifest_request"}
 {"type":"manifest","files":[{"path":"src/main.cs","size":1234,"hash":"..."}]}
 {"type":"sync_plan","upload":["src/main.cs"],"delete":[]}
@@ -243,13 +260,13 @@ Protocol rules:
 
 - The agent writes only protocol frames to stdout.
 - Agent diagnostics go to stderr or are sent as `output` frames.
-- Both sides reject unsupported protocol versions.
+- Both sides reject unsupported protocol versions; the client requires a `hello_ack`.
 - The local side owns diff calculation.
 - The remote side owns filesystem application and command execution.
 
 ## 7. Remote Execution
 
-Remote commands are named commands from `devsync.toml`.
+Remote commands are named commands from `[commands]` in the config.
 
 The local side sends:
 
@@ -284,7 +301,7 @@ The CLI should report actionable errors for:
 - Remote `agent_path` not found.
 - Remote agent exits before protocol handshake.
 - Protocol version mismatch.
-- `devsync.toml` parse or validation failure.
+- Config parse or validation failure.
 - Missing `commands.<name>` when that name is invoked.
 - `remote_dir` creation, scan, write, or delete failure.
 - Rejected unsafe paths.
@@ -325,28 +342,20 @@ Integration tests:
 - Agent stdio protocol using a child process without SSH.
 - Remote command execution against temporary scripts.
 
-Manual E2E tests:
+Manual E2E tests over real SSH: [manual-test.md](manual-test.md).
 
-- Install `devsync.exe` on both Windows machines.
-- Confirm normal `ssh user@host` works.
-- Run `devsync status`.
-- Run `devsync sync`.
-- Modify a file and confirm only that file uploads.
-- Run `devsync build`, `devsync test`, and `devsync run`.
-- Confirm `devsync.toml`, `.git/`, and `.devsync/` are never uploaded.
-
-## 11. Initial Scope
+## 11. Scope
 
 In scope:
 
 - Rust single executable.
 - Windows local to Windows remote.
-- Config file `devsync.toml`.
+- Config file `.devsync/config.toml` (legacy `devsync.toml` still read).
 - `ssh.exe` child process transport.
 - Remote `agent --stdio`.
 - Hash-based manifest diff.
 - One-way local-to-remote sync.
-- `status`, `sync`, `sync --delete`, `exec <name>`, `build`, `run`, `test`, `--no-sync`.
+- `init`, `status`, `sync`, `sync --delete`, `exec <name>`, `build`, `run`, `test`, `--no-sync`.
 - PowerShell command examples.
 
 Out of scope:
@@ -359,42 +368,3 @@ Out of scope:
 - Custom TCP, HTTP, WebSocket, or QUIC server.
 - Logs, clean, and shell commands.
 - File permission and symlink preservation.
-
-## 12. Milestones
-
-M1: CLI and config
-
-- Create Rust project structure.
-- Parse `devsync.toml`.
-- Implement command routing and validation.
-
-M2: Protocol and agent stdio
-
-- Implement frame encode/decode.
-- Implement `agent --stdio`.
-- Add handshake and version validation.
-
-M3: Manifest and diff
-
-- Walk local and remote directories.
-- Hash files with BLAKE3.
-- Compare manifests.
-- Print `status`.
-
-M4: Sync
-
-- Upload changed files over the protocol.
-- Write files safely under `remote_dir`.
-- Support explicit `--delete`.
-
-M5: Remote execution
-
-- Implement named command execution.
-- Stream stdout/stderr.
-- Propagate exit codes.
-
-M6: Manual E2E hardening
-
-- Verify Windows OpenSSH flow.
-- Improve error messages.
-- Document installation and example config.

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `devsync` is a Windows-first Rust CLI that keeps a local project as the source of truth and syncs it to a remote Windows *execution copy* over SSH. One executable plays two roles: the local client, and the remote agent started as `devsync.exe agent --stdio` through `ssh.exe`.
 
-The authoritative design is [docs/superpowers/specs/2026-06-05-devsync-agent-design.md](docs/superpowers/specs/2026-06-05-devsync-agent-design.md) — consult it before changing protocol, config, or command semantics. `docs/old/` is the superseded pre-agent (SFTP-era) design, kept for history only; do not implement from it.
+The authoritative design is [docs/design.md](docs/design.md) — consult it before changing protocol, config, or command semantics, and update it in the same change when those semantics move.
 
 ## Commands
 
@@ -70,7 +70,7 @@ Local side (`main.rs` → `sync.rs` → `client.rs`) owns config, diffing, and o
 
 - Errors use `anyhow` with `context`; the agent answers recoverable problems with an `Error` frame and keeps serving rather than terminating the connection.
 - Paths on the wire are always slash-normalized relative strings; convert with `MAIN_SEPARATOR_STR` only at the filesystem boundary.
-- Work is spec- and plan-driven: [docs/superpowers/plans/2026-06-05-devsync-agent.md](docs/superpowers/plans/2026-06-05-devsync-agent.md) tracks tasks. Commits are conventional-style (`feat:`, `fix:`, `docs:`, `test:`, `harden:`) and scoped to one change.
+- Commits are conventional-style (`feat:`, `fix:`, `docs:`, `test:`, `harden:`) and scoped to one change.
 - Out of scope for this version: SFTP/rsync, daemon or TCP/HTTP server modes, Linux remotes, bidirectional sync, Git object storage, `logs`/`clean`/`shell` subcommands, permission/symlink preservation.
 
 - **Config placement:** new projects use `.devsync/config.toml`; the entire `.devsync/` directory (config and cache) stays out of Git and sync. Default selection prefers the hidden config and falls back to `devsync.toml` only when absent. `init` follows the same selection to preserve legacy configs. Relative local paths in the hidden config resolve from its project root; legacy/custom configs retain CWD semantics. Explicit `--config` never falls back.
