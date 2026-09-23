@@ -103,7 +103,8 @@ ssh <host> "where devsync.exe"
 **Both sides must run the same build.** The handshake compares
 `PROTOCOL_VERSION` and refuses to continue on a mismatch, so after upgrading,
 reinstall the remote copy as well. The error names both versions when you
-forget.
+forget. Compare `devsync --version` with `ssh <host> "devsync.exe --version"`
+to check up front.
 
 ### 4. Set up a project
 

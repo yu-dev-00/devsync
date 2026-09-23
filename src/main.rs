@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "devsync")]
+#[command(name = "devsync", version)]
 #[command(about = "Sync local projects to a remote Windows execution copy")]
 struct Cli {
     // `global` so these work on either side of the subcommand. `devsync build -v`
