@@ -25,8 +25,8 @@ Copy-Item skills\devsync\SKILL.md $dst
 ```
 
 This copy is a bootstrap, not a second distribution channel. Step 4 replaces it
-with the copy embedded in the binary you are about to build — and since both
-come from this same checkout, there is nothing to reconcile.
+with the copy embedded in the binary you are about to install — and since both
+come from the same version, there is nothing to reconcile.
 
 ### 1. Remote: enable OpenSSH
 
@@ -62,13 +62,21 @@ remote. For an administrator account the file is
 `C:\ProgramData\ssh\administrators_authorized_keys` instead, and its ACL must be
 restricted or sshd ignores it.
 
-### 3. Build and install
+### 3. Download (or build) and install
 
-```bash
-cargo build --release
+Download `devsync.exe` from the
+[latest release](https://github.com/yu-dev-00/devsync/releases/latest) and check
+it against the `devsync.exe.sha256` published beside it:
+
+```powershell
+(Get-FileHash devsync.exe -Algorithm SHA256).Hash
 ```
 
-Install `target\release\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on
+The binary is unsigned, so SmartScreen may warn on first run. To build it
+yourself instead, run `cargo build --release` and use
+`target\release\devsync.exe`.
+
+Install `devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on
 **both** machines, and add that directory to each machine's user `PATH`. This is
 the standard per-user location on Windows, so no administrator rights are
 needed.
@@ -268,3 +276,7 @@ When a file becomes a directory or a directory becomes a file, `--delete`
 removes the conflicting tracked files before uploading the replacement. Empty
 directories at the replacement path are removed as needed. Excluded files and
 directories are preserved; if they block a replacement, sync fails.
+
+## License
+
+[MIT](LICENSE)
