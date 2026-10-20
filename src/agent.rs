@@ -100,12 +100,84 @@ fn shell_command(command: &str) -> std::process::Command {
 }
 
 /// `sh -c` already exits with the command's own status, so no wrapper is needed.
+/// The shell leads its own process group so `kill_process_tree` can reach
+/// everything it starts.
 #[cfg(not(windows))]
 fn shell_command(command: &str) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
     let mut shell = std::process::Command::new("sh");
-    shell.arg("-c").arg(command);
+    shell.arg("-c").arg(command).process_group(0);
     shell
 }
+
+/// Stop a command whose client has gone. Windows OpenSSH's sshd already tears
+/// the whole tree down on disconnect (CLAUDE.md, Ctrl+C), so the direct child
+/// is enough there.
+#[cfg(windows)]
+fn kill_process_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Linux sshd leaves a silent command running after the client disconnects
+/// (design §12), so the agent kills the child's whole process group itself.
+#[cfg(not(windows))]
+fn kill_process_tree(child: &mut std::process::Child) {
+    // ponytail: sh's builtin kill instead of a libc dependency for one call.
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("kill -s KILL -- -{}", child.id()))
+        .status();
+    let _ = child.wait();
+}
+
+/// Turn the pumped chunks into `Output` frames until both pipes close, sending a
+/// `Keepalive` whenever the command has been silent for `KEEPALIVE_INTERVAL`.
+/// The agent cannot read stdin mid-command without stealing frames, so a failed
+/// write is the only way it learns the client is gone; the error says so.
+fn forward_output<W: Write>(
+    writer: &mut W,
+    receiver: std::sync::mpsc::Receiver<(&'static str, Vec<u8>)>,
+) -> Result<()> {
+    // Chunk boundaries fall at arbitrary byte offsets, so a multi-byte
+    // sequence can straddle two reads. Each stream keeps its own decoder,
+    // which holds the partial sequence until the next chunk completes it.
+    let encoding = console_encoding();
+    let mut stdout_decoder = OutputDecoder::new(encoding);
+    let mut stderr_decoder = OutputDecoder::new(encoding);
+
+    loop {
+        let (stream, chunk) = match receiver.recv_timeout(KEEPALIVE_INTERVAL) {
+            Ok(received) => received,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                protocol::write_message(writer, &Message::Keepalive)?;
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        let decoder = if stream == "stderr" {
+            &mut stderr_decoder
+        } else {
+            &mut stdout_decoder
+        };
+        let data = decoder.push(&chunk);
+        if !data.is_empty() {
+            protocol::write_message(writer, &Message::Output { stream: stream.to_string(), data })?;
+        }
+    }
+
+    // Flush each decoder: anything still held back is truncated rather than
+    // merely split, and must be reported instead of silently dropped.
+    for (stream, decoder) in [("stdout", &mut stdout_decoder), ("stderr", &mut stderr_decoder)] {
+        let data = decoder.finish();
+        if !data.is_empty() {
+            protocol::write_message(writer, &Message::Output { stream: stream.to_string(), data })?;
+        }
+    }
+    Ok(())
+}
+
+const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Longest byte sequence any console code page needs for one character. The
 /// Windows DBCS code pages top out at two; the extra byte is slack.
@@ -391,40 +463,9 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 };
                 let stderr_pump = std::thread::spawn(move || pump_stream("stderr", child_stderr, sender));
 
-                // Chunk boundaries fall at arbitrary byte offsets, so a multi-byte
-                // sequence can straddle two reads. Each stream keeps its own decoder,
-                // which holds the partial sequence until the next chunk completes it.
-                let encoding = console_encoding();
-                let mut stdout_decoder = OutputDecoder::new(encoding);
-                let mut stderr_decoder = OutputDecoder::new(encoding);
-
-                for (stream, chunk) in receiver {
-                    let decoder = if stream == "stderr" {
-                        &mut stderr_decoder
-                    } else {
-                        &mut stdout_decoder
-                    };
-                    let data = decoder.push(&chunk);
-                    if !data.is_empty() {
-                        protocol::write_message(
-                            &mut writer,
-                            &Message::Output { stream: stream.to_string(), data },
-                        )?;
-                    }
-                }
-
-                // Flush each decoder: anything still held back is truncated rather than
-                // merely split, and must be reported instead of silently dropped.
-                for (stream, decoder) in
-                    [("stdout", &mut stdout_decoder), ("stderr", &mut stderr_decoder)]
-                {
-                    let data = decoder.finish();
-                    if !data.is_empty() {
-                        protocol::write_message(
-                            &mut writer,
-                            &Message::Output { stream: stream.to_string(), data },
-                        )?;
-                    }
+                if let Err(error) = forward_output(&mut writer, receiver) {
+                    kill_process_tree(&mut child);
+                    return Err(error.context("client disconnected during exec; command stopped"));
                 }
 
                 let _ = stdout_pump.join();

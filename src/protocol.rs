@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -19,6 +19,8 @@ pub enum Message {
     SyncComplete { uploaded: usize, deleted: usize, skipped: usize },
     Exec { name: String },
     Output { stream: String, data: String },
+    /// Sent while a command is silent, so a write notices a client that is gone.
+    Keepalive,
     Exit { code: i32 },
     Error { message: String },
 }

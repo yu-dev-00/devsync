@@ -176,6 +176,7 @@ pub fn exec(config: &Config, name: &str) -> Result<i32> {
                     print!("{data}");
                 }
             }
+            Message::Keepalive => {}
             Message::Exit { code } => {
                 crate::vlog!("exec {name} exited {code} after {:?}", started.elapsed());
                 return Ok(code);

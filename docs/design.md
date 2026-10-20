@@ -242,8 +242,8 @@ JSON messages are UTF-8. Binary file content follows only messages that declare 
 Message types (`PROTOCOL_VERSION` in `src/protocol.rs` is authoritative):
 
 ```json
-{"type":"hello","version":3}
-{"type":"hello_ack","agent_version":3}
+{"type":"hello","version":4}
+{"type":"hello_ack","agent_version":4}
 {"type":"config","remote_dir":"C:\\work\\project","commands":{"build":"...","run":"...","test":"..."},"exclude":["bin","obj"]}
 {"type":"manifest_request"}
 {"type":"manifest","files":[{"path":"src/main.cs","size":1234,"hash":"..."}]}
@@ -252,6 +252,7 @@ Message types (`PROTOCOL_VERSION` in `src/protocol.rs` is authoritative):
 {"type":"sync_complete","uploaded":1,"deleted":0,"skipped":10}
 {"type":"exec","name":"build"}
 {"type":"output","stream":"stdout","data":"..."}
+{"type":"keepalive"}
 {"type":"exit","code":0}
 {"type":"error","message":"commands.build is not defined"}
 ```
@@ -388,7 +389,7 @@ Measured 2026-10-20 with Windows `ssh.exe` against Debian bookworm OpenSSH in [d
 Intended design, smallest first:
 
 1. **Shell per agent OS** *(implemented)*. `#[cfg(windows)]` keeps the PowerShell wrapper; otherwise run `sh -c <command>`, whose exit status is already the native code. The agent decides from its own OS, so this needs no protocol change. A spawn failure answers with an `Error` frame instead of ending the agent.
-2. **Disconnect detection during exec.** The agent cannot read stdin while a command runs without stealing frames, so it detects a gone client by writing: while the child is silent it sends a `keepalive` frame every second, and a failed write kills the child's process group (spawned with `process_group(0)`). This adds a message type and bumps `PROTOCOL_VERSION`. Windows keeps relying on sshd's teardown; the frame is harmless there.
+2. **Disconnect detection during exec** *(implemented)*. The agent cannot read stdin while a command runs without stealing frames, so it detects a gone client by writing: while the child is silent it sends a `keepalive` frame every second, and a failed write kills the child's process group (spawned with `process_group(0)`). This adds a message type and bumps `PROTOCOL_VERSION`. Windows keeps relying on sshd's teardown; the frame is harmless there. Verified in the container: killing the local `devsync.exe` and `ssh.exe` removes the agent, the shell, and nested or backgrounded children within seconds. A command that calls `setsid` itself leaves the group and is not reached.
 3. **Case spelling converges to local.** The diff also uploads when keys match but spelling differs, and the agent removes a case-variant sibling before writing. On Windows that turns into a case-only rename, so both OSes converge on the local spelling with no protocol change. Directory case variants are not handled.
 4. **Executable bit by shebang.** On Unix the agent writes files that start with `#!` as `0755`. Windows has no bit to preserve, so this is the only signal available locally; general permission preservation stays out of scope.
 5. **Documentation only:** use `.gitattributes` (`*.sh text eol=lf`) for scripts that run remotely, and set `agent_path` explicitly because the default is `devsync.exe`.

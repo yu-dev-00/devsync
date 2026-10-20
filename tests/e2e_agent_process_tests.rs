@@ -17,6 +17,7 @@ fn e2e_exec_reports_powershell_failures_without_a_native_exit_code() {
         let code = loop {
             match protocol::read_message(&mut stdout).unwrap() {
                 Message::Output { .. } => {},
+                Message::Keepalive => {}
                 Message::Exit { code } => break code,
                 other => panic!("unexpected response: {other:?}"),
             }
@@ -182,6 +183,7 @@ fn e2e_exec_runs_named_command_and_streams_exit() {
                 stdout_data.push_str(&data);
             }
             Message::Output { .. } => {} // stderr — ignore
+            Message::Keepalive => {}
             Message::Exit { code } => {
                 exit_code = code;
                 break;
@@ -230,6 +232,7 @@ fn e2e_exec_propagates_exact_nonzero_exit_code() {
     let exit_code = loop {
         match protocol::read_message(&mut stdout).unwrap() {
             Message::Output { .. } => {}
+            Message::Keepalive => {}
             Message::Exit { code } => break code,
             other => panic!("unexpected message during exec: {other:?}"),
         }
@@ -281,6 +284,7 @@ fn e2e_exec_streams_output_before_the_command_exits() {
                 }
                 collected.push_str(&data);
             }
+            Message::Keepalive => {}
             Message::Exit { code } => break code,
             other => panic!("unexpected message during exec: {other:?}"),
         }
@@ -332,6 +336,7 @@ fn e2e_exec_reassembles_output_larger_than_one_chunk() {
         match protocol::read_message(&mut stdout).unwrap() {
             Message::Output { stream, data } if stream == "stdout" => collected.push_str(&data),
             Message::Output { .. } => {}
+            Message::Keepalive => {}
             Message::Exit { .. } => break,
             other => panic!("unexpected message during exec: {other:?}"),
         }
@@ -383,6 +388,7 @@ fn e2e_exec_decodes_non_ascii_output_in_the_console_encoding() {
         match protocol::read_message(&mut stdout).unwrap() {
             Message::Output { stream, data } if stream == "stdout" => collected.push_str(&data),
             Message::Output { .. } => {}
+            Message::Keepalive => {}
             Message::Exit { .. } => break,
             other => panic!("unexpected message during exec: {other:?}"),
         }
@@ -447,6 +453,7 @@ fn e2e_exec_decodes_utf8_and_console_output_from_the_same_command() {
         match protocol::read_message(&mut stdout).unwrap() {
             Message::Output { stream, data } if stream == "stdout" => collected.push_str(&data),
             Message::Output { .. } => {}
+            Message::Keepalive => {}
             Message::Exit { .. } => break,
             other => panic!("unexpected message during exec: {other:?}"),
         }
@@ -542,6 +549,7 @@ fn e2e_exec_arbitrary_name() {
                 stdout_data.push_str(&data);
             }
             Message::Output { .. } => {} // stderr — ignore
+            Message::Keepalive => {}
             Message::Exit { code } => {
                 exit_code = code;
                 break;
@@ -582,4 +590,38 @@ fn e2e_version_mismatch_is_rejected() {
 
     // Agent should have exited; wait for it to clean up.
     child.wait().ok();
+}
+
+/// A silent command gets `Keepalive` frames, and once writing them fails the
+/// agent stops the command and exits instead of waiting it out. Linux sshd does
+/// not do this for us (design §12), so the agent must.
+#[test]
+fn e2e_exec_stops_a_silent_command_once_the_client_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut stdin, mut stdout) = spawn_agent();
+    protocol::write_message(&mut stdin, &Message::Config {
+        remote_dir: dir.path().to_string_lossy().into_owned(),
+        commands: BTreeMap::from([("silent".into(), "Start-Sleep -Seconds 60".into())]),
+        exclude: vec![],
+    }).unwrap();
+    protocol::write_message(&mut stdin, &Message::Exec { name: "silent".into() }).unwrap();
+
+    loop {
+        match protocol::read_message(&mut stdout).unwrap() {
+            Message::Keepalive => break,
+            Message::Output { .. } => {}
+            other => panic!("unexpected message during exec: {other:?}"),
+        }
+    }
+    drop(stdout);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(std::time::Instant::now() < deadline, "agent kept waiting on the command after the client left");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert!(!status.success(), "losing the client is an error exit");
 }
