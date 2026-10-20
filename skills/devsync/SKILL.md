@@ -35,8 +35,7 @@ side.
 ### Both remotes: the local install and the ssh check
 
 Build with `cargo build --release` (or use a release download), copy
-`target
-elease\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\`, and put
+`target\release\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\`, and put
 that directory on the user `PATH`. Do not reach for
 `setx PATH "%PATH%;..."`: `%PATH%` expands to the *merged* system and user value,
 which then gets written back into the user `PATH` and silently truncated at 1024
@@ -61,8 +60,7 @@ ssh <user>@<host> "echo ok"
 ### Picking the remote: `~/.devsync/remotes.toml`
 
 Before asking the user for host details, read `~/.devsync/remotes.toml`
-(`%USERPROFILE%\.devsync
-emotes.toml`). It is an optional, user-maintained
+(`%USERPROFILE%\.devsync\remotes.toml`). It is an optional, user-maintained
 catalog of remote machines; devsync never reads it, so it may be absent or
 out of date. An entry looks like:
 
@@ -297,16 +295,18 @@ exclude entry, not avoiding `--delete`.
 | Message | What it means |
 | --- | --- |
 | `commands.<name> is not defined` | The name is missing from `[commands]`. Add it. Caught locally, before connecting. |
-| `unsupported protocol version: N (agent supports M)` | The two machines are running different builds. Reinstall the remote binary from the same build as the local one. |
+| `unsupported protocol version: ...` | The two machines run different builds. N (or "local devsync speaks") is the local side, M (or "remote agent speaks") the remote. Upgrade the **older** side to match the newer one; never downgrade a remote that other projects may use. Newer agents name the older side in the message. |
+| `unexpected handshake response (remote agent may be an incompatible older version)` | The remote agent predates the handshake. Upgrade the remote. |
 | `no response from the remote agent: ...` | ssh could not reach the host, or the agent is not where the config expects. Check `ssh <user>@<host> "echo ok"` first; ssh's own error usually prints just above. |
 | Non-ASCII output is mangled | The remote agent is likely an old build. Reinstall it. |
-| `./build.sh: not found`, `$'
-': command not found`, `set: Illegal option -` | Linux remote, CRLF script. Fix line endings (`.gitattributes`: `*.sh text eol=lf`), not the command. |
+| `./build.sh: not found`, `$'\r': command not found`, `set: Illegal option -` | Linux remote, CRLF script. Fix line endings (`.gitattributes`: `*.sh text eol=lf`), not the command. |
 | `Permission denied` running a script on Linux | The file has no `#!` line, so it was not marked executable. Add one, or run it as `sh ./script.sh`. |
 | A file you edited did not upload | Check whether an exclude pattern matches it — `status` shows what is in scope. |
 
-For a suspected bad hash cache, delete `.devsync/` on the affected side to force
-a full rehash. It is only a cache; removing it costs time, never correctness.
+For a suspected bad hash cache, delete `.devsync/state` on the affected side to
+force a full rehash. It is only a cache; removing it costs time, never
+correctness. Never delete the whole local `.devsync/`: it also holds
+`config.toml`, which is not in git and cannot be recovered.
 
 ## Verifying the remote actually changed
 

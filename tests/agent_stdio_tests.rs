@@ -59,6 +59,20 @@ fn agent_rejects_mismatched_protocol_version() {
     }
 }
 
+#[test]
+fn version_mismatch_names_the_older_side() {
+    for (version, older) in [(1, "upgrade the local side"), (999, "upgrade the remote side")] {
+        let mut input = Vec::new();
+        protocol::write_message(&mut input, &protocol::Message::Hello { version }).unwrap();
+        let mut output = Vec::new();
+        agent::run_agent(Cursor::new(input), &mut output).unwrap();
+        match protocol::read_message(&mut Cursor::new(output)).unwrap() {
+            protocol::Message::Error { message } => assert!(message.contains(older), "got: {message}"),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+}
+
 // Step 1: failing test – agent_writes_file_payload_under_remote_dir
 /// The SyncComplete ack used to hardcode uploaded=0, so `--verbose` reported
 /// that the agent wrote nothing even after a successful sync.

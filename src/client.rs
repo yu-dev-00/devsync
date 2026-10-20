@@ -26,8 +26,10 @@ pub fn perform_handshake<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> R
         }
         Message::HelloAck { agent_version } => {
             anyhow::bail!(
-                "remote agent protocol version {agent_version} != local {}",
-                protocol::PROTOCOL_VERSION
+                "protocol version mismatch: remote agent speaks {agent_version}, local devsync speaks {}; \
+                 upgrade the {} side so both run the same devsync build",
+                protocol::PROTOCOL_VERSION,
+                if agent_version < protocol::PROTOCOL_VERSION { "remote" } else { "local" },
             )
         }
         Message::Error { message } => anyhow::bail!(message),

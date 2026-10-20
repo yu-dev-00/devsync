@@ -152,7 +152,7 @@ Both should name `agent_path` and the ssh connection as things to check.
 
 **5. Protocol version mismatch.** Build a local binary with `PROTOCOL_VERSION`
 bumped and run it against the deployed agent. Expect
-`unsupported protocol version: N (agent supports M)`. Revert afterwards.
+`unsupported protocol version: local devsync speaks N, remote agent speaks M; upgrade the ... side`. Revert afterwards.
 
 **6. Hash cache.** After a `sync`, both `<local_dir>/.devsync/state` and
 `<remote_dir>/.devsync/state` must exist. Then check all three of these:
@@ -205,8 +205,7 @@ Rebuild the image after every agent change; the local binary must match.
 | Check | Expected |
 | --- | --- |
 | `status`, `sync` | Same as on Windows. |
-| `exec` of `echo before; exit 7`, a missing command, `printf 'こんにちは
-'` | Exit 7, exit 127, Japanese text intact. |
+| `exec` of `echo before; exit 7`, a missing command, `printf 'こんにちは\n'` | Exit 7, exit 127, Japanese text intact. |
 | `./build.sh` with an LF `#!/bin/sh` script | Runs; `ls -l` shows `rwxr-xr-x`. |
 | Same script with CRLF | `./build.sh: not found` (exit 127). |
 | `exec` of `echo start; sleep 300`, then Ctrl+C | `docker exec devsync-linux ps -u dev` is empty within seconds. |

@@ -372,9 +372,13 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     protocol::write_message(
                         &mut writer,
                         &Message::Error {
+                            // Name the older side: the obvious fix ("reinstall
+                            // the remote") is wrong when the local side is behind.
                             message: format!(
-                                "unsupported protocol version: {version} (agent supports {})",
-                                protocol::PROTOCOL_VERSION
+                                "unsupported protocol version: local devsync speaks {version}, \
+                                 remote agent speaks {}; upgrade the {} side so both run the same devsync build",
+                                protocol::PROTOCOL_VERSION,
+                                if version < protocol::PROTOCOL_VERSION { "local" } else { "remote" },
                             ),
                         },
                     )?;

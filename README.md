@@ -228,8 +228,7 @@ What differs from a Windows remote:
 - An uploaded file that starts with `#!` is made executable, because Windows has
   no executable bit to send. Other permissions are not synchronized.
 - Files are copied byte for byte, so a CRLF checkout breaks shell scripts
-  (`./build.sh: not found` from a `#!/bin/sh
-` line, or
+  (`./build.sh: not found` from a `#!/bin/sh\r` line, or
   `set: Illegal option -`). Keep remotely run scripts LF in git with
   `.gitattributes`, for example `*.sh text eol=lf` and `gradlew text eol=lf`.
 - Ctrl+C stops the remote command and everything it started. A command that
@@ -340,7 +339,8 @@ unchanged tree is not re-read on every command. Uploads are still decided by
 comparing content hashes, never timestamps.
 
 `.devsync/` is a forced exclude: the cache is never uploaded and never deleted
-by `sync --delete`. Delete the directory to force a full rehash.
+by `sync --delete`. Delete `.devsync/state` to force a full rehash — not the
+whole `.devsync/` directory, which locally also holds `config.toml`.
 
 ## `sync --delete` and excludes
 
