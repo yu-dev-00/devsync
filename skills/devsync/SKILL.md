@@ -26,43 +26,17 @@ fixing, fix it locally and sync.
 
 Skip this whenever `devsync --help` works and the project has `.devsync/config.toml` or legacy `devsync.toml`.
 
-The same executable is both the local client and the remote agent, so it goes on
+The local machine is always Windows; the remote is Windows or Linux. The same
+executable is both the local client and the remote agent, so it goes on
 **both** machines, and both must run the same build — the handshake compares
-protocol versions and refuses a mismatch.
+protocol versions and refuses a mismatch. Compare `devsync --version` on each
+side.
 
-**1. Remote: OpenSSH server, login shell left alone.** As administrator on the
-remote machine:
+### Both remotes: the local install and the ssh check
 
-```powershell
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-Start-Service sshd
-Set-Service -Name sshd -StartupType Automatic
-```
-
-Leave the default shell as `cmd.exe`. The agent writes protocol frames and
-nothing else to stdout, so a PowerShell profile banner prepended to the stream
-corrupts the 4-byte frame length and surfaces as a handshake failure. No output
-from this means nothing is overridden:
-
-```powershell
-Get-ItemProperty "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -ErrorAction SilentlyContinue
-```
-
-**2. Key authentication, then prove it.** This must print exactly `ok` — no
-password prompt, no banner, not one stray character:
-
-```bash
-ssh <user>@<host> "echo ok"
-```
-
-**3. Build, and install on both machines.**
-
-```bash
-cargo build --release
-```
-
-Copy `target\release\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on each
-machine and put that directory on the user `PATH`. Do not reach for
+Build with `cargo build --release` (or use a release download), copy
+`targetelease\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\`, and put
+that directory on the user `PATH`. Do not reach for
 `setx PATH "%PATH%;..."`: `%PATH%` expands to the *merged* system and user value,
 which then gets written back into the user `PATH` and silently truncated at 1024
 characters. Edit the user-scoped value directly:
@@ -75,17 +49,70 @@ if ($user -notlike "*$dir*") {
 }
 ```
 
-In a new session, confirm the remote resolves it:
+Then set up key authentication and prove it. This must print exactly `ok` — no
+password prompt, no banner, not one stray character, because the agent's stdout
+*is* the protocol stream:
 
 ```bash
-ssh <host> "where devsync.exe"
+ssh <user>@<host> "echo ok"
 ```
 
-**4. Configure the project.** From the project root:
+### Windows remote
+
+**1. OpenSSH server, login shell left alone.** As administrator on the remote:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+Leave the default shell as `cmd.exe`: a PowerShell profile banner prepended to
+the stream corrupts the 4-byte frame length and surfaces as a handshake failure.
+No output from this means nothing is overridden:
+
+```powershell
+Get-ItemProperty "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -ErrorAction SilentlyContinue
+```
+
+**2. Install the agent** exactly as locally — same directory, same `PATH` edit —
+and confirm in a new session: `ssh <host> "where devsync.exe"`.
+
+**3. Configure the project** from its root:
 
 ```bash
 devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill --skill-target codex
 ```
+
+### Linux remote
+
+**1. Any OpenSSH server.** Shell startup files (`~/.bashrc` and friends) must
+print nothing for a non-interactive session, or the `echo ok` check above fails
+for the same reason a PowerShell banner does.
+
+**2. Build the agent on the remote**, from the same version as the local build,
+and install it:
+
+```bash
+cargo build --release
+install -D target/release/devsync ~/.local/bin/devsync
+```
+
+Confirm from the local machine: `ssh <host> "~/.local/bin/devsync --version"`
+matches `devsync --version`.
+
+**3. Configure the project**, then fix two things `init` writes for Windows:
+
+```bash
+devsync init --host <host> --user <user> --remote-dir "/home/<user>/work/project" --install-skill --skill-target codex
+```
+
+- Add `agent_path = "/home/<user>/.local/bin/devsync"` under `[connection]`. It
+  is required: sshd's non-interactive shell often lacks `~/.local/bin` on
+  `PATH`, and the default is the Windows name `devsync.exe`.
+- Replace the PowerShell examples in `[commands]` with `sh` command lines.
+
+### The skill and the first sync
 
 Choose `--skill-target codex` for Codex, `claude` for Claude Code, or `both`
 when the user uses both. Omitting `--skill-target` preserves the original Claude
@@ -93,10 +120,10 @@ Code default. Install only the requested host(s). The same embedded `SKILL.md`
 is installed to `~/.agents/skills/devsync/` for Codex and
 `~/.claude/skills/devsync/` for Claude Code. No per-project skill copy is needed.
 
-That writes `.devsync/config.toml`, adds `.devsync/` to `.gitignore` when the directory
-is a git repository, and installs this skill. Fill in `[commands]`, then run
-`devsync status` — it transfers nothing and shows what a sync would do — before
-the first `devsync sync`.
+`init` writes `.devsync/config.toml`, adds `.devsync/` to `.gitignore` when the
+directory is a git repository, and installs this skill. Fill in `[commands]`,
+then run `devsync status` — it transfers nothing and shows what a sync would
+do — before the first `devsync sync`.
 
 **`--install-skill` overwrites this file, and finishing setup with it is the
 point.** Refresh Codex with `devsync init --install-skill --skill-target codex`
@@ -105,6 +132,22 @@ is supplied. In Codex the user can explicitly invoke `$devsync`; if discovery
 does not refresh, restart Codex. The skill embedded in the binary is the only copy guaranteed to match
 the binary. A copy placed by hand — out of a git checkout, so this guidance
 exists before devsync does — is a bootstrap, and the binary's copy supersedes it.
+
+## What differs between a Windows and a Linux remote
+
+The remote OS is the agent's OS; nothing in the config names it. A POSIX
+`remote_dir` (`/home/dev/project`) means a Linux remote.
+
+| | Windows remote | Linux remote |
+| --- | --- | --- |
+| ssh login shell | Keep `cmd.exe`; a PowerShell profile banner breaks the handshake. | Startup files must print nothing for non-interactive sessions. |
+| `agent_path` | Optional; `devsync.exe` is found on `PATH`. | Required, as an absolute path. |
+| Command shell | PowerShell `-Command`. A failing cmdlet or command lookup still exits nonzero. | `sh -c`; the exit status passes through unchanged. |
+| Script files | PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, so save scripts with non-ASCII text as UTF-8 *with* BOM. | Bytes are copied verbatim; a CRLF script fails. Keep it LF via `.gitattributes` (`*.sh text eol=lf`). |
+| Executable bit | Not applicable. | Files starting with `#!` arrive executable; other modes are not synced. Without a shebang, run `sh ./script.sh`. |
+| Name case | Case-insensitive. A local case-only rename is applied as a rename. | Same, and a stale second spelling beside the current one is removed by `sync --delete`. |
+| Ctrl+C | sshd tears down the remote command tree. | The agent kills the command's process group; a command that calls `setsid` escapes. |
+| Output text | Decoded per line as UTF-8 or the console code page. | UTF-8. |
 
 ## Start by reading .devsync/config.toml
 
@@ -124,7 +167,7 @@ on the remote.
 [connection]
 host = "remote-pc"
 user = "user"
-# agent_path is optional; it defaults to devsync.exe, found via the remote PATH
+# agent_path is optional on Windows (defaults to devsync.exe on PATH), required on Linux
 
 [paths]
 local_dir = "."
@@ -140,11 +183,6 @@ exclude = ["target", "node_modules", "bin", "obj"]
 
 Commands run with `remote_dir` as the working directory. Paths in a command are
 relative to it, not to anything local.
-
-A POSIX `remote_dir` (`/home/dev/project`) means a Linux remote. There commands
-run under `sh -c`, `agent_path` must be set (usually
-`/home/<user>/.local/bin/devsync`), files starting with `#!` arrive executable,
-and nothing converts line endings — a CRLF script fails remotely.
 
 ## Commands
 
@@ -216,7 +254,8 @@ exclude entry, not avoiding `--delete`.
 | `unsupported protocol version: N (agent supports M)` | The two machines are running different builds. Reinstall the remote binary from the same build as the local one. |
 | `no response from the remote agent: ...` | ssh could not reach the host, or the agent is not where the config expects. Check `ssh <user>@<host> "echo ok"` first; ssh's own error usually prints just above. |
 | Non-ASCII output is mangled | The remote agent is likely an old build. Reinstall it. |
-| `./build.sh: not found`, `$'': command not found`, `set: Illegal option -` | Linux remote, CRLF script. Fix line endings (`.gitattributes`: `*.sh text eol=lf`), not the command. |
+| `./build.sh: not found`, `$'
+': command not found`, `set: Illegal option -` | Linux remote, CRLF script. Fix line endings (`.gitattributes`: `*.sh text eol=lf`), not the command. |
 | `Permission denied` running a script on Linux | The file has no `#!` line, so it was not marked executable. Add one, or run it as `sh ./script.sh`. |
 | A file you edited did not upload | Check whether an exclude pattern matches it — `status` shows what is in scope. |
 
