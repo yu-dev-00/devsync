@@ -244,3 +244,23 @@ output as UTF-8, so Japanese build errors arrived as solid U+FFFD — unreadable
 and unrecoverable. Every check up to this point had used ASCII-only scripts and
 missed it entirely. Fixed by decoding in the console code page; verified with
 Japanese text surviving the round trip intact.
+
+## 2026-10-20 results (Windows remote, protocol 4)
+
+Re-run against the same kind of real Windows remote after the Linux work, with
+the new agent installed beside the old one (`agent_path` pointing at it) so
+existing projects kept working. Everything passed:
+
+- `status` / `sync` into a fresh `remote_dir`.
+- `exec`: exit 7 from `cmd /c exit 7`, exit 1 from a failing `Get-Item`,
+  Japanese output intact, and a 4-second silent command finishing normally
+  while `Keepalive` frames arrived.
+- Case-only rename `Src/Foo.txt` → `src/foo.txt`: `status` listed both renames,
+  `sync --delete` renamed without uploading or deleting, the remote showed the
+  new spelling, and the next `status` was clean. A rename combined with a
+  content change renamed and uploaded in one sync.
+- Ctrl+C (local `devsync.exe` and `ssh.exe` killed) during a silent
+  `ping -n 300`: the remote agent, PowerShell, and `PING.EXE` were gone within
+  6 seconds; unrelated PowerShell processes were untouched.
+- An old (protocol 3) client against the new agent:
+  `unsupported protocol version: 3 (agent supports 4)`.
