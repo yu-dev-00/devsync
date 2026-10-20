@@ -102,3 +102,29 @@ build = "echo build"
     let err = cfg.command("missing").unwrap_err().to_string();
     assert!(err.contains("commands.missing"), "error was: {err}");
 }
+
+#[test]
+fn load_errors_point_at_the_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devsync.toml");
+    let err = |path: &std::path::Path| format!("{:#}", config::Config::load(path).unwrap_err());
+
+    assert!(err(&path).contains("devsync init"), "missing config: {}", err(&path));
+
+    // A misspelled section is reported where it is, not as a missing field.
+    fs::write(&path, "[connection]\nhost='box'\nuser='alice'\n[path]\nremote_dir='C:/work/app'\n").unwrap();
+    assert!(err(&path).contains("unknown field `path`"), "typo: {}", err(&path));
+
+    fs::write(&path, "[connection]\nhost='box'\nuser='alice'\n").unwrap();
+    let missing = err(&path);
+    assert!(missing.contains("paths.remote_dir") && missing.contains("devsync.toml"), "missing field: {missing}");
+}
+
+#[test]
+fn undefined_command_lists_the_defined_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devsync.toml");
+    fs::write(&path, "[connection]\nhost='box'\nuser='alice'\n[paths]\nremote_dir='C:/work/app'\n[commands]\nbuild='make'\ntest='make test'\n").unwrap();
+    let cfg = config::Config::load(&path).unwrap();
+    assert_eq!(cfg.command("bulid").unwrap_err().to_string(), "commands.bulid is not defined; defined: build, test");
+}

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "devsync", version)]
-#[command(about = "Sync local projects to a remote Windows execution copy")]
+#[command(about = "Sync a local project to a remote Windows or Linux machine over SSH and run commands there")]
 struct Cli {
     // `global` so these work on either side of the subcommand. `devsync build -v`
     // is what people actually type; without it clap rejects the flag there.
@@ -25,7 +25,9 @@ struct Cli {
 enum Command {
     /// Create .devsync/config.toml (preserves legacy projects; optionally installs skills)
     Init(InitArgs),
+    /// Show what a sync would rename, upload, and delete; changes no project files
     Status,
+    /// Upload changed files to remote_dir
     Sync(SyncArgs),
     /// Execute a named command from [commands], syncing first by default
     Exec(ExecArgs),
@@ -35,6 +37,8 @@ enum Command {
     Run(RunFlags),
     /// Alias for `exec test`; syncs first by default
     Test(RunFlags),
+    /// Remote side, started by devsync over ssh; not for direct use
+    #[command(hide = true)]
     Agent(AgentArgs),
 }
 
@@ -62,6 +66,7 @@ struct InitArgs {
 
 #[derive(Debug, Args)]
 struct SyncArgs {
+    /// Also delete remote files missing locally (excluded paths are never touched)
     #[arg(long)]
     delete: bool,
 }

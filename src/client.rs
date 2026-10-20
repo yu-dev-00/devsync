@@ -17,7 +17,7 @@ pub fn perform_handshake<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> R
     crate::vlog!("handshake: sent hello version {}", protocol::PROTOCOL_VERSION);
     let response = protocol::read_message(reader).context(
         "no response from the remote agent: check that ssh can reach the host and \
-         that connection.agent_path points at devsync.exe on the remote machine",
+         that connection.agent_path points at devsync on the remote machine",
     )?;
     match response {
         Message::HelloAck { agent_version } if agent_version == protocol::PROTOCOL_VERSION => {
@@ -65,7 +65,7 @@ impl RemoteClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .context("failed to start ssh.exe")?;
+            .context("could not run ssh: install the OpenSSH client or put ssh on PATH")?;
 
         let stdin = child.stdin.take().context("failed to open ssh stdin")?;
         let stdout = child.stdout.take().context("failed to open ssh stdout")?;
@@ -75,9 +75,49 @@ impl RemoteClient {
             reader: BufReader::new(stdout),
             writer: BufWriter::new(stdin),
         };
-        perform_handshake(&mut client.reader, &mut client.writer)?;
+        if let Err(error) = perform_handshake(&mut client.reader, &mut client.writer) {
+            // An answered handshake (version mismatch, Error frame) explains itself.
+            // Silence means ssh or the agent died, and ssh's exit status says which.
+            if error.root_cause().downcast_ref::<std::io::Error>().is_none() {
+                return Err(error);
+            }
+            return Err(client.explain_silent_agent(config));
+        }
         client.send_config(config)?;
         Ok(client)
+    }
+
+    fn explain_silent_agent(&mut self, config: &Config) -> anyhow::Error {
+        let c = &config.connection;
+        // The stream already hit EOF, so ssh is exiting; bound the wait anyway.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let status = loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => break status.code(),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(50))
+                }
+                _ => break None,
+            }
+        };
+        crate::vlog!("ssh exited with {status:?}");
+        // 255 is ssh's own failure code; anything else came from the remote side.
+        if status == Some(255) {
+            anyhow::anyhow!(
+                "ssh could not connect to {}@{} port {} (ssh's own error is printed above). \
+                 Try: ssh -p {} {}@{} \"echo ok\"",
+                c.user, c.host, c.port, c.port, c.user, c.host
+            )
+        } else {
+            anyhow::anyhow!(
+                "ssh connected, but the remote agent did not answer (ssh exited {}). \
+                 Check connection.agent_path (now \"{}\"): it must name devsync on the remote, \
+                 e.g. \"/home/<user>/.local/bin/devsync\" on Linux. Run with -v and try the \
+                 printed ssh command by hand.",
+                status.map_or("without a code".to_string(), |code| format!("with {code}")),
+                c.agent_path
+            )
+        }
     }
 
     fn send_config(&mut self, config: &Config) -> Result<()> {
@@ -107,6 +147,7 @@ impl RemoteClient {
 
     pub fn read(&mut self) -> Result<Message> {
         protocol::read_message(&mut self.reader)
+            .context("the remote agent closed the connection; its own error, if any, is printed above")
     }
 
     pub(crate) fn streams(&mut self) -> (&mut impl Read, &mut impl Write) {

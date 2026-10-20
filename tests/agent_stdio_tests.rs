@@ -384,3 +384,51 @@ fn agent_marks_shebang_files_executable() {
     assert_ne!(mode("run.sh") & 0o111, 0);
     assert_eq!(mode("data.txt") & 0o111, 0);
 }
+
+/// A file that cannot be written is answered with an Error naming it, and the
+/// agent keeps serving: the next file still lands and the batch is acked.
+#[test]
+fn agent_reports_a_failed_write_and_keeps_serving() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("blocker"), "a file, not a directory").unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Config {
+        remote_dir: dir.path().to_string_lossy().into_owned(), commands: BTreeMap::new(), exclude: vec![],
+    }).unwrap();
+    for path in ["blocker/x.txt", "ok.txt"] {
+        protocol::write_message(&mut input, &protocol::Message::File {
+            path: path.into(), size: 2, hash: blake3::hash(b"hi").to_hex().to_string(),
+        }).unwrap();
+        input.extend_from_slice(b"hi");
+    }
+    protocol::write_message(&mut input, &protocol::Message::SyncPlan { upload: vec![], delete: vec![] }).unwrap();
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+    let mut replies = Cursor::new(output);
+    match protocol::read_message(&mut replies).unwrap() {
+        protocol::Message::Error { message } => assert!(message.contains("cannot write blocker/x.txt"), "got: {message}"),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    assert_eq!(
+        protocol::read_message(&mut replies).unwrap(),
+        protocol::Message::SyncComplete { uploaded: 1, deleted: 0, skipped: 0 }
+    );
+    assert!(dir.path().join("ok.txt").exists());
+}
+
+#[test]
+fn exec_without_remote_dir_says_to_sync_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Config {
+        remote_dir: dir.path().join("never-synced").to_string_lossy().into_owned(),
+        commands: BTreeMap::from([("build".into(), "echo hi".into())]), exclude: vec![],
+    }).unwrap();
+    protocol::write_message(&mut input, &protocol::Message::Exec { name: "build".into() }).unwrap();
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+    match protocol::read_message(&mut Cursor::new(output)).unwrap() {
+        protocol::Message::Error { message } => assert!(message.contains("devsync sync"), "got: {message}"),
+        other => panic!("expected Error, got {other:?}"),
+    }
+}

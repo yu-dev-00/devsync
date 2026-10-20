@@ -357,10 +357,18 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     )?;
                     continue;
                 };
-                std::fs::create_dir_all(&config.remote_dir)?;
-                let matcher = ExcludeMatcher::new(config.exclude.clone())?;
-                let manifest = manifest::build_manifest(&config.remote_dir, &matcher)?;
-                protocol::write_message(&mut writer, &manifest.into())?;
+                let scanned = (|| -> Result<manifest::Manifest> {
+                    let root = config.remote_dir.display();
+                    std::fs::create_dir_all(&config.remote_dir)
+                        .with_context(|| format!("cannot create remote_dir {root} on the remote"))?;
+                    let matcher = ExcludeMatcher::new(config.exclude.clone())?;
+                    manifest::build_manifest(&config.remote_dir, &matcher)
+                        .with_context(|| format!("cannot scan remote_dir {root} on the remote"))
+                })();
+                match scanned {
+                    Ok(manifest) => protocol::write_message(&mut writer, &manifest.into())?,
+                    Err(error) => protocol::write_message(&mut writer, &Message::Error { message: format!("{error:#}") })?,
+                }
             }
             Message::Hello { version } => {
                 if version == protocol::PROTOCOL_VERSION {
@@ -411,17 +419,29 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     )?;
                     continue;
                 }
-                let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
-                if target.is_dir() {
-                    let excludes = ExcludeMatcher::new(config.exclude.clone())?;
-                    remove_empty_directory_tree(&config.remote_dir, &target, &excludes)?;
+                // A failed write is answered, not fatal: the rest of the batch still
+                // lands, and the client reports this Error when it reads the ack.
+                let written = (|| -> Result<()> {
+                    let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                    if target.is_dir() {
+                        let excludes = ExcludeMatcher::new(config.exclude.clone())?;
+                        remove_empty_directory_tree(&config.remote_dir, &target, &excludes)?;
+                    }
+                    if let Some(parent) = target.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&target, &bytes)
+                        .context("is it open in a running program on the remote?")?;
+                    mark_executable_if_script(&target, &bytes)?;
+                    Ok(())
+                })();
+                match written {
+                    Ok(()) => written_since_ack += 1,
+                    Err(error) => protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: format!("cannot write {path} on the remote: {error:#}") },
+                    )?,
                 }
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::write(&target, &bytes)?;
-                mark_executable_if_script(&target, &bytes)?;
-                written_since_ack += 1;
             }
             Message::Rename { from, to } => {
                 let Some(config) = &config else {
@@ -451,8 +471,13 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     }
                     let target = config.remote_dir.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
                     if target.is_file() {
-                        std::fs::remove_file(target)?;
-                        deleted += 1;
+                        match std::fs::remove_file(target) {
+                            Ok(()) => deleted += 1,
+                            Err(error) => protocol::write_message(
+                                &mut writer,
+                                &Message::Error { message: format!("cannot delete {path} on the remote: {error}") },
+                            )?,
+                        }
                     }
                 }
                 // `skipped` stays 0: skipping is a local decision made from the diff,
@@ -494,11 +519,18 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 let mut child = match spawned {
                     Ok(child) => child,
                     Err(error) => {
-                        let shell = shell.get_program().to_string_lossy().into_owned();
-                        protocol::write_message(
-                            &mut writer,
-                            &Message::Error { message: format!("failed to start {shell}: {error}") },
-                        )?;
+                        // A missing working directory fails the spawn too, and would
+                        // otherwise read as a missing shell.
+                        let message = if !config.remote_dir.is_dir() {
+                            format!(
+                                "remote_dir {} does not exist on the remote; run `devsync sync` first (or drop --no-sync)",
+                                config.remote_dir.display()
+                            )
+                        } else {
+                            let shell = shell.get_program().to_string_lossy().into_owned();
+                            format!("failed to start {shell} on the remote: {error}")
+                        };
+                        protocol::write_message(&mut writer, &Message::Error { message })?;
                         continue;
                     }
                 };

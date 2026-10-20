@@ -1,5 +1,5 @@
 use crate::{exclude::ExcludeMatcher, hash_cache::{self, HashCache}, path_safety};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 use walkdir::WalkDir;
@@ -41,7 +41,12 @@ pub fn build_manifest(root: &Path, excludes: &ExcludeMatcher) -> Result<Manifest
 
         let hash = match previous.reusable_hash(&normalized, size, mtime_ns) {
             Some(cached) => cached.to_string(),
-            None => blake3::hash(&fs::read(entry.path())?).to_hex().to_string(),
+            None => {
+                let bytes = fs::read(entry.path()).with_context(|| {
+                    format!("cannot read {} (open in another program? or add it to [sync].exclude)", entry.path().display())
+                })?;
+                blake3::hash(&bytes).to_hex().to_string()
+            }
         };
 
         current.record(normalized.clone(), size, mtime_ns, hash.clone());

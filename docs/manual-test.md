@@ -157,7 +157,7 @@ bumped and run it against the deployed agent. Expect
 **6. Hash cache.** After a `sync`, both `<local_dir>/.devsync/state` and
 `<remote_dir>/.devsync/state` must exist. Then check all three of these:
 
-- `devsync status` reports `upload: 0` / `delete: 0` — the cache files must not
+- `devsync status` reports `upload: 0` / `delete (only with sync --delete): 0` — the cache files must not
   show up as files to sync or delete.
 - `devsync sync --delete` leaves `<remote_dir>/.devsync/state` in place.
 - Editing a file after the cache is warm still shows it as an upload. A cache

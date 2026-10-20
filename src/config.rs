@@ -29,7 +29,10 @@ pub fn hidden_config_project_root(path: &Path) -> Option<&Path> {
     }
 }
 
+// Unknown keys are errors: a misspelled `[path]` would otherwise surface as a
+// missing `paths.remote_dir`, far from the typo.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub connection: ConnectionConfig,
@@ -42,6 +45,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConnectionConfig {
     #[serde(default)]
     pub host: String,
@@ -65,6 +69,7 @@ impl Default for ConnectionConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PathConfig {
     #[serde(default = "default_local_dir")]
     pub local_dir: PathBuf,
@@ -82,6 +87,7 @@ impl Default for PathConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SyncConfig {
     #[serde(default)]
     pub exclude: Vec<String>,
@@ -99,11 +105,19 @@ fn default_local_dir() -> PathBuf {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
+        if !path.try_exists()? {
+            bail!(
+                "no devsync config at {} — run `devsync init`, run from the project root, or pass --config <path>",
+                path.display()
+            );
+        }
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut cfg: Config = toml::from_str(&raw)
             .with_context(|| format!("failed to parse {}", path.display()))?;
-        cfg.validate()?;
+        if let Err(error) = cfg.validate() {
+            bail!("{}: {error}", path.display());
+        }
         if cfg.paths.local_dir.is_relative() {
             if let Some(root) = hidden_config_project_root(path) {
                 cfg.paths.local_dir = root.join(&cfg.paths.local_dir);
@@ -133,6 +147,17 @@ impl Config {
         self.commands
             .get(name)
             .map(String::as_str)
-            .ok_or_else(|| anyhow::anyhow!("commands.{name} is not defined"))
+            .ok_or_else(|| {
+                let defined: Vec<&str> = self.commands.keys().map(String::as_str).collect();
+                if defined.is_empty() {
+                    anyhow::anyhow!("commands.{name} is not defined; [commands] is empty")
+                } else {
+                    // Real projects define dozens; a typo needs a hint, not the whole list.
+                    const SHOWN: usize = 10;
+                    let more = defined.len().saturating_sub(SHOWN);
+                    let suffix = if more > 0 { format!(", … ({more} more in [commands])") } else { String::new() };
+                    anyhow::anyhow!("commands.{name} is not defined; defined: {}{suffix}", defined[..defined.len().min(SHOWN)].join(", "))
+                }
+            })
     }
 }

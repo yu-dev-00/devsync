@@ -7,7 +7,7 @@ use crate::{
     path_safety::{is_same_or_descendant, validate_relative_path},
     protocol::{self, Message},
 };
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -16,7 +16,9 @@ use std::path::Path;
 /// guaranteeing the header matches the payload even if the file changed since
 /// the manifest was built.
 pub fn build_file_message(local_dir: &std::path::Path, rel_path: &str) -> Result<(Message, Vec<u8>)> {
-    let bytes = std::fs::read(local_dir.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR)))?;
+    let path = local_dir.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("cannot read {} (open in another program?)", path.display()))?;
     let message = Message::File {
         path: rel_path.to_string(),
         size: bytes.len() as u64,
@@ -40,7 +42,8 @@ pub fn status(config: &Config) -> Result<()> {
     for path in &plan.upload {
         println!("  + {path}");
     }
-    println!("delete: {}", plan.delete.len());
+    // Planned as if --delete were given; plain `sync` keeps these.
+    println!("delete (only with sync --delete): {}", plan.delete.len());
     for path in &plan.delete {
         println!("  - {path}");
     }
@@ -50,6 +53,9 @@ pub fn status(config: &Config) -> Result<()> {
 }
 
 pub fn local_manifest(config: &Config) -> Result<Manifest> {
+    if !config.paths.local_dir.is_dir() {
+        bail!("paths.local_dir {} is not a directory", config.paths.local_dir.display());
+    }
     let matcher = ExcludeMatcher::new(config.sync.exclude.clone())?;
     let started = std::time::Instant::now();
     let manifest = manifest::build_manifest(&config.paths.local_dir, &matcher)?;
@@ -165,7 +171,9 @@ fn finish_batch<R: Read, W: Write>(reader: &mut R, writer: &mut W, delete: Vec<S
     // Wait for the agent to confirm it has processed all uploads and deletes
     // before the connection is dropped (Drop kills the ssh child). Reading the
     // SyncComplete ack guarantees the agent flushed every file write to disk.
-    match protocol::read_message(reader)? {
+    let reply = protocol::read_message(reader)
+        .context("the remote agent closed the connection; its own error, if any, is printed above")?;
+    match reply {
         // Only the agent's own counts are echoed here. `skipped` is excluded on
         // purpose: it is decided locally, so the agent always reports 0 and
         // printing it would look like a discrepancy.
