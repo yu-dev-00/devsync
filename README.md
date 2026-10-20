@@ -57,10 +57,27 @@ ssh <user>@<host> "echo ok"
 ```
 
 A single stray character here will break the protocol. If you are prompted for a
-password, copy your public key to `C:\Users\<user>\.ssh\authorized_keys` on the
-remote. For an administrator account the file is
-`C:\ProgramData\ssh\administrators_authorized_keys` instead, and its ACL must be
-restricted or sshd ignores it.
+password, create a key (once) and append it to `authorized_keys` on the remote.
+Use `scp`, not a PowerShell pipe: PowerShell 5.1 re-encodes piped text and the
+key line arrives corrupted.
+
+```powershell
+ssh-keygen -t ed25519
+scp $env:USERPROFILE\.ssh\id_ed25519.pub <user>@<host>:devsync-key.pub
+ssh <user>@<host> "if not exist .ssh mkdir .ssh & type devsync-key.pub >> .ssh\authorized_keys & del devsync-key.pub"
+```
+
+For an account in the remote's Administrators group, sshd reads
+`C:\ProgramData\ssh\administrators_authorized_keys` instead, and ignores it
+unless its ACL is restricted. As administrator on the remote:
+
+```powershell
+icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+```
+
+devsync runs `ssh -p <port> <user>@<host>` and nothing else, so a non-default
+key goes in an `~/.ssh/config` `Host` entry (with `IdentityFile`), and a
+non-default port in the project config's `port`.
 
 ### 3. Download (or build) and install
 
@@ -79,7 +96,12 @@ yourself instead, run `cargo build --release` and use
 Install `devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\` on
 **both** machines, and add that directory to each machine's user `PATH`. This is
 the standard per-user location on Windows, so no administrator rights are
-needed.
+needed. To put the same file on the remote from the local machine:
+
+```powershell
+ssh <user>@<host> "mkdir %LOCALAPPDATA%\Programs\devsync"
+scp devsync.exe <user>@<host>:AppData/Local/Programs/devsync/devsync.exe
+```
 
 To add it to `PATH`, edit the user-scoped value directly rather than using
 `setx PATH "%PATH%;..."` — that one expands to the *merged* system and user
@@ -97,27 +119,32 @@ if ($user -notlike "*$dir*") {
 Open a new session and confirm the remote resolves it:
 
 ```bash
-ssh <host> "where devsync.exe"
+ssh <user>@<host> "where devsync.exe"
 ```
 
-**Both sides must run the same build.** The handshake compares
-`PROTOCOL_VERSION` and refuses to continue on a mismatch, so after upgrading,
-reinstall the remote copy as well. The error names both versions when you
-forget. Compare `devsync --version` with `ssh <host> "devsync.exe --version"`
-to check up front.
+**Both sides must run the same build.** devsync refuses to connect when the two
+speak different protocol versions, so after upgrading one machine, upgrade the
+other too; the error says which side is older. Compare `devsync --version` with
+`ssh <user>@<host> "devsync.exe --version"` to check up front.
 
 ### 4. Set up a project
 
 From the project root:
 
-```bash
-devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill
+```powershell
+devsync init --host <host> --user <user> --remote-dir "C:\work\project"
 ```
 
-This writes `.devsync/config.toml`, adds `.devsync/` to `.gitignore` when the directory
-is a git repository, and installs the Claude Code skill (see below). It refuses
-to overwrite an existing config unless you pass `--force`. The three connection
-flags are optional — omit them and edit the generated file instead.
+This writes `.devsync/config.toml` and adds `.devsync/` to `.gitignore` when the
+directory is a git repository. It refuses to overwrite an existing config unless
+you pass `--force`. The three connection flags are optional — omit them and edit
+the generated file instead. Add `--install-skill` to also install the AI agent
+skill (see below).
+
+**Give each project its own `remote_dir`.** devsync creates the folder; pick one
+that does not exist yet. Two projects sharing a folder means `sync --delete` for
+one deletes the other's files. For a new project, `devsync status` must plan no
+deletes — even one means the folder is already someone else's.
 
 `connection.agent_path` is left out of the generated config on purpose: it
 defaults to `devsync.exe`, which the remote resolves through `PATH`. Set it only
@@ -144,22 +171,25 @@ move the legacy config to `.devsync/config.toml` and add `.devsync/` to
 `.gitignore`. Relative paths in legacy and other custom config files retain
 working-directory-relative behavior.
 
-Fill in `[commands]` with whatever this project needs building and running with,
-then:
+The generated `[commands]` and `[sync].exclude` are placeholders. Replace the
+commands with the project's real ones (`build = "dotnet build"`,
+`test = "cargo test"`, `build = ".\\build.ps1"`, …) and add to `exclude` whatever
+the toolchain generates or the remote creates (`.venv`, `__pycache__`, `target`,
+datasets, model weights) — see [`sync --delete` and excludes](#sync---delete-and-excludes)
+for the pattern rules. Then:
 
-```bash
-devsync status
+```powershell
+devsync status   # transfers nothing; lists what a sync would rename, upload, and delete
+devsync sync
+devsync build    # syncs, runs commands.build in remote_dir, exits with its exit code
 ```
-
-This transfers nothing; it prints what a sync *would* upload and delete. Once it
-looks right, run `devsync sync`.
 
 ### The Codex / Claude Code skill
 
 Choose the host when initializing a project:
 
 ```powershell
-devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill --skill-target codex
+devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill --skill-target <claude|codex|both>
 ```
 
 | Selection | User-wide installation directory |
@@ -183,8 +213,8 @@ It installs once per user rather than per project, because it describes how
 devsync works, not what any one project does. A per-project copy would go stale
 as devsync changes and keep advising behavior that no longer exists.
 
-Re-run `devsync init --install-skill --skill-target codex` after upgrading to
-refresh the Codex skill; use `claude` or `both` for the other targets. That is safe
+Re-run `devsync init --install-skill --skill-target <same target>` after
+upgrading to refresh the skill. That is safe
 in a project that is already set up: with `--install-skill`, an existing
 config is reported and left alone rather than treated as an error, so
 refreshing the skill never costs you your connection details or `[commands]`.
@@ -194,17 +224,30 @@ including the failure modes that are easy to miss.
 
 ### Linux remote
 
-The local side stays Windows; only the remote changes. Steps 1–3 become:
+The local side stays Windows and is installed exactly as in step 3. Only the
+remote half of steps 1–3 changes:
 
 1. Any OpenSSH server works. As on Windows, `ssh <user>@<host> "echo ok"` must
    print exactly `ok`: a shell startup file that prints anything corrupts the
    protocol stream.
-2. Build the agent on the remote with `cargo build --release` and copy
-   `target/release/devsync` to `~/.local/bin/devsync`. The local and remote
-   builds must still come from the same version.
+2. On the remote, build the agent from the same version as the local
+   `devsync.exe` (needs Rust; https://rustup.rs) and install it:
+
+   ```bash
+   git clone --branch v<version> https://github.com/yu-dev-00/devsync.git
+   cd devsync && cargo build --release
+   install -D target/release/devsync ~/.local/bin/devsync
+   ~/.local/bin/devsync --version   # must match the local devsync --version
+   ```
 3. Set `agent_path` to that absolute path. sshd runs the agent from a
    non-interactive shell, which often does not put `~/.local/bin` on `PATH`, and
-   the default (`devsync.exe`) is the Windows name anyway.
+   the default (`devsync.exe`) is the Windows name anyway. `init` cannot set it,
+   so add it to the generated config, and replace the placeholder PowerShell
+   `[commands]` with `sh` command lines.
+
+Run `init` from PowerShell. In Git Bash, `--remote-dir /home/...` is rewritten
+to `C:/Program Files/Git/home/...` before devsync sees it, unless you prefix the
+command with `MSYS_NO_PATHCONV=1`.
 
 ```toml
 [connection]
@@ -325,9 +368,12 @@ subcommand is fine: `devsync exec sync` runs `commands.sync`, not `devsync sync`
 
 Commands run with `remote_dir` as the working directory, and their output
 streams back as it is produced. The remote command's own exit code becomes
-devsync's exit code. On a Windows remote, a failing PowerShell cmdlet or command
-lookup returns a nonzero code even when no native program supplied an exit
-code. On a Linux remote, commands run under `sh -c`.
+devsync's exit code. On a Windows remote each command runs as
+`powershell -NoProfile -ExecutionPolicy Bypass -Command <command>` (Windows
+PowerShell 5.1, so no `&&`), which means a script path such as `.\build.ps1` is
+a complete command; a failing cmdlet or command lookup returns a nonzero code
+even when no native program supplied one. On a Linux remote, commands run under
+`sh -c`.
 
 See `devsync.toml.example` for the full set of configuration options.
 
@@ -350,6 +396,13 @@ local upload scan and the remote agent's manifest. Excluded paths such as `bin`,
 `obj`, `build`, `dist`, and `artifacts` are therefore invisible to the diff on the
 remote side too, so `--delete` will **not** remove them — build outputs produced on
 the remote machine are preserved.
+
+Each exclude entry is either a file/directory name, matched at any depth (so
+`build` also excludes `src/build/`), or a relative path prefix such as
+`data/raw`. Matching ignores case. Wildcards are **not** supported: `*.log`
+matches nothing. `status` shows exactly what is in scope, so check it after
+changing excludes. `status` also lists remote-only files under
+`delete (only with sync --delete)`; plain `sync` keeps them.
 
 Path comparisons and exclude matching ignore case using Windows ordinal rules,
 so `DEVSYNC.TOML` is also excluded and a case-only rename cannot cause the

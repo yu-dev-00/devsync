@@ -85,18 +85,24 @@ note = "CUDA 12, RTX 4090"
 - **Entries exist:** propose the ones that fit the project, using `os` and
   `note` (a CUDA project wants the GPU box). The user picks; do not choose
   silently when more than one fits.
-- **Chosen entry:** use its values for `init` below. `remote_dir` is
-  `remote_root` joined with the project's directory name, unless the user
-  wants otherwise. Add `# remote: <name>` as the first line of the resulting
-  config so the source machine is recorded. Copy `agent_path` when present.
+- **Chosen entry:** pass `host`, `user`, and `remote_dir` to `init` below.
+  `remote_dir` is `remote_root` joined with the project's directory name,
+  unless the user wants otherwise or the `note` suggests another root (offer
+  it). `init` has no flags for the rest, so afterwards edit the config: add
+  `# remote: <name>` as its first line, and copy `port` and `agent_path` into
+  `[connection]` when the entry has them.
 - **Make sure `remote_dir` is not another project's copy.** Two projects with
   the same directory name land in the same folder, and `sync --delete` would
   then wipe the other one. Before `init`, check the folder is free
-  (`ssh <host> "if exist C:\work\<name> echo TAKEN"`, or `test -e` on Linux).
-  After `init`, `devsync status` must plan no deletes for a project that has
-  never been synced; even one means the folder is taken, so pick another name.
-- **Before trusting an entry**, run the `echo ok` check and compare versions;
-  the catalog is a hint, not proof the machine is reachable.
+  (`ssh -p <port> <user>@<host> "if exist C:\work\<name> echo TAKEN"`, or
+  `test -e` on Linux). If it is taken, ask whether it is this project's own
+  earlier copy before picking another name. After `init`, `devsync status` must
+  plan no deletes for a project that has never been synced; even one means the
+  folder is taken.
+- **Before trusting an entry**, run `ssh -p <port> <user>@<host> "echo ok"` and
+  compare `devsync --version` with the remote's
+  (`ssh <host> "devsync.exe --version"`, or `<agent_path> --version` on Linux).
+  The catalog is a hint, not proof the machine is reachable.
 - **No catalog or no fitting entry:** ask the user. After the new machine works,
   offer to add it to the catalog (create the file if needed). Never store
   passwords or keys there.
@@ -125,7 +131,7 @@ and confirm in a new session: `ssh <host> "where devsync.exe"`.
 **3. Configure the project** from its root:
 
 ```bash
-devsync init --host <host> --user <user> --remote-dir "C:\work\project" --install-skill --skill-target codex
+devsync init --host <host> --user <user> --remote-dir "C:\work\project"
 ```
 
 ### Linux remote
@@ -148,34 +154,46 @@ matches `devsync --version`.
 **3. Configure the project**, then fix two things `init` writes for Windows:
 
 ```bash
-devsync init --host <host> --user <user> --remote-dir "/home/<user>/work/project" --install-skill --skill-target codex
+devsync init --host <host> --user <user> --remote-dir "/home/<user>/work/project"
 ```
+
+Run it from PowerShell, or from Git Bash with `MSYS_NO_PATHCONV=1` in front:
+Git Bash otherwise rewrites `/home/...` into `C:/Program Files/Git/home/...`
+before devsync sees it.
 
 - Add `agent_path = "/home/<user>/.local/bin/devsync"` under `[connection]`. It
   is required: sshd's non-interactive shell often lacks `~/.local/bin` on
   `PATH`, and the default is the Windows name `devsync.exe`.
 - Replace the PowerShell examples in `[commands]` with `sh` command lines.
 
-### The skill and the first sync
+### Finishing the config and the first sync
 
-Choose `--skill-target codex` for Codex, `claude` for Claude Code, or `both`
-when the user uses both. Omitting `--skill-target` preserves the original Claude
-Code default. Install only the requested host(s). The same embedded `SKILL.md`
-is installed to `~/.agents/skills/devsync/` for Codex and
-`~/.claude/skills/devsync/` for Claude Code. No per-project skill copy is needed.
+`init` writes `.devsync/config.toml` and adds `.devsync/` to `.gitignore` when
+the directory is a git repository. Its `[commands]` and `[sync].exclude` are
+placeholders for a .NET/Node project; replace both before the first sync:
 
-`init` writes `.devsync/config.toml`, adds `.devsync/` to `.gitignore` when the
-directory is a git repository, and installs this skill. Fill in `[commands]`,
-then run `devsync status` — it transfers nothing and shows what a sync would
-do — before the first `devsync sync`.
+- `[commands]`: the project's real build/run/test command lines (see the shell
+  rows in the table below).
+- `[sync].exclude`: everything the toolchain generates or the remote creates —
+  `.venv`, `__pycache__`, `target`, `node_modules`, datasets, model weights.
+  This matters twice: excluded paths are not uploaded, and `sync --delete` never
+  removes them remotely (a remote `.venv` built by `uv sync` would otherwise be
+  wiped). Entries are file/directory names matched at any depth, or relative
+  path prefixes, case-insensitive. Wildcards are **not** supported: `*.pyc`
+  matches nothing.
 
-**`--install-skill` overwrites this file, and finishing setup with it is the
-point.** Refresh Codex with `devsync init --install-skill --skill-target codex`
-(or use `both` for both hosts). An existing config is preserved unless `--force`
-is supplied. In Codex the user can explicitly invoke `$devsync`; if discovery
-does not refresh, restart Codex. The skill embedded in the binary is the only copy guaranteed to match
-the binary. A copy placed by hand — out of a git checkout, so this guidance
-exists before devsync does — is a bootstrap, and the binary's copy supersedes it.
+Then run `devsync status` (it transfers nothing), then `devsync sync`, then the
+first `devsync build` (or whichever command).
+
+### Installing or refreshing this skill
+
+`devsync init --install-skill --skill-target <claude|codex|both>` installs the
+skill embedded in the binary to `~/.claude/skills/devsync/` (Claude Code),
+`~/.agents/skills/devsync/` (Codex), or both. Pick what the user uses; omitting
+the target means Claude Code. Re-run it with the same target after upgrading
+devsync; an existing config is left alone. The embedded copy is the only one
+guaranteed to match the binary — one copied out of a git checkout is a
+bootstrap that this replaces. In Codex, restart if the skill does not appear.
 
 ## What differs between a Windows and a Linux remote
 
@@ -186,8 +204,8 @@ The remote OS is the agent's OS; nothing in the config names it. A POSIX
 | --- | --- | --- |
 | ssh login shell | Keep `cmd.exe`; a PowerShell profile banner breaks the handshake. | Startup files must print nothing for non-interactive sessions. |
 | `agent_path` | Optional; `devsync.exe` is found on `PATH`. | Required, as an absolute path. |
-| Command shell | PowerShell `-Command`. A failing cmdlet or command lookup still exits nonzero. | `sh -c`; the exit status passes through unchanged. |
-| Script files | PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, so save scripts with non-ASCII text as UTF-8 *with* BOM. | Bytes are copied verbatim; a CRLF script fails. Keep it LF via `.gitattributes` (`*.sh text eol=lf`). |
+| Command shell | Each command runs as `powershell -NoProfile -ExecutionPolicy Bypass -Command <command>` (Windows PowerShell 5.1: no `&&`). `.\build.ps1` is enough; wrapping it in another `powershell -File` works but starts a second PowerShell. A failing cmdlet or command lookup still exits nonzero. | `sh -c <command>`; the exit status passes through unchanged. |
+| Script files | PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, so save scripts with non-ASCII text as UTF-8 *with* BOM. | Bytes are copied verbatim; a CRLF script fails. Keep it LF via `.gitattributes` (`*.sh text eol=lf`), then delete the working copy and `git checkout -- <file>` — `.gitattributes` alone does not rewrite the working copy, so nothing re-uploads. |
 | Executable bit | Not applicable. | Files starting with `#!` arrive executable; other modes are not synced. Without a shebang, run `sh ./script.sh`. |
 | Name case | Case-insensitive. A local case-only rename is applied as a rename. | Same, and a stale second spelling beside the current one is removed by `sync --delete`. |
 | Ctrl+C | sshd tears down the remote command tree. | The agent kills the command's process group; a command that calls `setsid` escapes. |
@@ -218,7 +236,7 @@ local_dir = "."
 remote_dir = "C:\\work\\project"
 
 [commands]
-build = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
+build = ".\\build.ps1"
 test  = "cargo test"
 
 [sync]
@@ -231,7 +249,7 @@ relative to it, not to anything local.
 ## Commands
 
 ```bash
-devsync status                  # list planned uploads/deletes; may refresh hash caches
+devsync status                  # list planned renames/uploads/deletes; may refresh hash caches
 devsync sync                    # upload changed files; preserve existing files
 devsync sync --delete           # also delete remote files absent locally
 devsync exec <name>             # sync, then run [commands].<name> remotely
@@ -248,7 +266,12 @@ After editing code, `devsync build` is all you need — it syncs first. Running
 
 Reach for `status` when you want to understand the situation without changing
 anything: before a first sync against an unfamiliar remote, or when a sync moved
-more files than expected.
+more files than expected. It lists `rename` (case-only respelling to match the
+local name; every sync applies it and no content changes), `upload`,
+`delete (only with sync --delete)` (plain `sync` keeps these), and `skipped`.
+
+`-v` prints diagnostics to stderr, including the exact `spawning: ssh ...` line —
+the first thing to try by hand when a connection fails.
 
 ## Output and exit codes are real
 
@@ -294,11 +317,19 @@ exclude entry, not avoiding `--delete`.
 
 | Message | What it means |
 | --- | --- |
-| `commands.<name> is not defined` | The name is missing from `[commands]`. Add it. Caught locally, before connecting. |
+| `no devsync config at ...` | Not in a project root, or not set up. `cd` to the root, or set it up (see *Installing devsync*). |
+| `unknown field ...` (when loading the config) | A misspelled key or section in the config, at the line shown. Fix the spelling. |
+| `commands.<name> is not defined; defined: ...` | The name is missing from `[commands]`; the message lists what exists. Add it or fix the typo. Caught locally, before connecting. |
 | `unsupported protocol version: ...` | The two machines run different builds. N (or "local devsync speaks") is the local side, M (or "remote agent speaks") the remote. Upgrade the **older** side to match the newer one; never downgrade a remote that other projects may use. Newer agents name the older side in the message. |
 | `unexpected handshake response (remote agent may be an incompatible older version)` | The remote agent predates the handshake. Upgrade the remote. |
-| `no response from the remote agent: ...` | ssh could not reach the host, or the agent is not where the config expects. Check `ssh <user>@<host> "echo ok"` first; ssh's own error usually prints just above. |
-| Non-ASCII output is mangled | The remote agent is likely an old build. Reinstall it. |
+| `ssh could not connect to ...` | The network or ssh side: host, port, key, or sshd. ssh's own error is printed just above; try the suggested `echo ok` command. |
+| `ssh connected, but the remote agent did not answer ...` | ssh works, but `agent_path` does not start devsync, or the login shell printed something (PowerShell banner, `.bashrc` output). On Linux this usually means `agent_path` is unset. Run with `-v` and try the printed ssh command by hand. |
+| `the remote agent closed the connection ...` | The agent stopped mid-session; its own error, if any, is printed just above. |
+| `cannot write <path> on the remote: is it open in a running program ...` | A program on the remote (often the app from a previous `run`, or an IDE) holds the file. Stop it — through a configured command if there is one — and re-run. Other files in the batch were still written. |
+| `remote_dir ... does not exist on the remote; run devsync sync first` | `--no-sync` against a never-synced remote. Drop `--no-sync`. |
+| `client disconnected during exec; command stopped` | The local side went away (Ctrl+C, network, sleep) and the remote command was killed. Re-run it. |
+| `cannot rename A -> B: B already exists` | Linux remote only: a stale `B` with no synced files (empty, or excluded output only) sits beside `A`, and the case-only rename cannot proceed. Ask the user before removing `B` on the remote. |
+| Non-ASCII output is mangled | Either a BOM-less `.ps1` with non-ASCII text on a Windows remote (see *Script files* above), or an old remote agent. |
 | `./build.sh: not found`, `$'\r': command not found`, `set: Illegal option -` | Linux remote, CRLF script. Fix line endings (`.gitattributes`: `*.sh text eol=lf`), not the command. |
 | `Permission denied` running a script on Linux | The file has no `#!` line, so it was not marked executable. Add one, or run it as `sh ./script.sh`. |
 | A file you edited did not upload | Check whether an exclude pattern matches it — `status` shows what is in scope. |

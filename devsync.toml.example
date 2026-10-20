@@ -6,7 +6,8 @@ port = 22
 # agent_path defaults to "devsync.exe", resolved through the remote user's PATH.
 # Installing the agent to %LOCALAPPDATA%\Programs\devsync and putting that
 # directory on PATH (see the README) means you can leave this out entirely.
-# Set it only when the agent lives somewhere off PATH:
+# Set it only when the agent lives somewhere off PATH. A Linux remote always
+# needs it, e.g. agent_path = "/home/user/.local/bin/devsync".
 # agent_path = "C:\\tools\\devsync.exe"
 
 [paths]
@@ -17,17 +18,26 @@ remote_dir = "C:\\work\\project"
 # Run with: devsync exec <name>  (e.g. devsync exec lint)
 # The built-in aliases `devsync build`, `devsync run`, and `devsync test`
 # correspond to the keys "build", "run", and "test" respectively.
+# Commands run in remote_dir. On a Windows remote each one already runs as
+# `powershell -NoProfile -ExecutionPolicy Bypass -Command <command>`, so a script
+# path is enough; on a Linux remote it runs as `sh -c <command>`.
+# These entries are placeholders: point them at the project's real commands.
 [commands]
-build = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
-run = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1"
-test = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\test.ps1"
-lint = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\lint.ps1"
+build = ".\\build.ps1"
+run = ".\\run.ps1"
+test = ".\\test.ps1"
+lint = ".\\lint.ps1"
 
 [sync]
 # Excludes apply to BOTH the local upload scan and the remote agent's manifest,
 # so excluded paths (e.g. bin, obj, build, dist, artifacts) are never uploaded
 # and are never deleted by `devsync sync --delete`. Forced excludes
-# (devsync.toml, .git, .devsync) are always protected.
+# (devsync.toml, .git, .devsync) are always protected, listed here or not.
+# Each entry is a file/directory name matched at any depth (so "build" also
+# matches src/build) or a relative path prefix such as "data/raw".
+# Case-insensitive; wildcards are not supported ("*.log" matches nothing).
+# Add what your toolchain generates or the remote creates (.venv, __pycache__,
+# target, datasets, model weights) so --delete never removes it remotely.
 exclude = [
   ".git",
   ".devsync",

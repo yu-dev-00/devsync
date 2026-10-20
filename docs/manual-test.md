@@ -199,7 +199,8 @@ Host devsync-linux
 ```
 
 and point a test project at it with `host = "devsync-linux"`, `user = "dev"`,
-`port = 2222`, `agent_path = "devsync"`, `remote_dir = "/home/dev/proj"`.
+`port = 2222`, `agent_path = "devsync"` (the image installs it on `PATH`; a real
+host needs the absolute path), `remote_dir = "/home/dev/proj"`.
 Rebuild the image after every agent change; the local binary must match.
 
 | Check | Expected |

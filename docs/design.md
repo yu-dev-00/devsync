@@ -145,10 +145,10 @@ local_dir = "."
 remote_dir = "C:\\work\\project"
 
 [commands]
-build = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\build.ps1"
-run = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1"
-test = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\test.ps1"
-lint = "powershell -NoProfile -ExecutionPolicy Bypass -File .\\lint.ps1"
+build = ".\\build.ps1"
+run = ".\\run.ps1"
+test = ".\\test.ps1"
+lint = ".\\lint.ps1"
 
 [sync]
 exclude = [
@@ -319,13 +319,10 @@ The remote agent resolves the command from the config sent by the local side, se
 {"type":"exit","code":0}
 ```
 
-Initial command examples use PowerShell:
-
-```text
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\test.ps1
-```
+A Windows agent runs each command as
+`powershell -NoProfile -ExecutionPolicy Bypass -Command <command>` with an
+exit-code wrapper, so a script path such as
+`.\build.ps1` is a complete command. A non-Windows agent runs `sh -c <command>`.
 
 The protocol does not expose arbitrary command execution. Only configured names can be executed.
 
