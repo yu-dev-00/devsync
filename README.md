@@ -228,7 +228,8 @@ What differs from a Windows remote:
 - An uploaded file that starts with `#!` is made executable, because Windows has
   no executable bit to send. Other permissions are not synchronized.
 - Files are copied byte for byte, so a CRLF checkout breaks shell scripts
-  (`./build.sh: not found` from a `#!/bin/sh` line, or
+  (`./build.sh: not found` from a `#!/bin/sh
+` line, or
   `set: Illegal option -`). Keep remotely run scripts LF in git with
   `.gitattributes`, for example `*.sh text eol=lf` and `gradlew text eol=lf`.
 - Ctrl+C stops the remote command and everything it started. A command that
@@ -239,6 +240,42 @@ What differs from a Windows remote:
 
 `docker/linux-remote/Dockerfile` builds a disposable Linux remote for trying
 this out; `docs/manual-test.md` walks through it.
+
+### Remote catalog (optional)
+
+Keep the machines you build on in `~/.devsync/remotes.toml`. devsync does not
+read this file; it is where you, or an AI agent using the skill, look when a
+project has no config yet, so a new project starts from a known machine instead
+of from memory:
+
+```toml
+[remotes.build-win]
+host = "build-win"        # an ~/.ssh/config alias or an address
+user = "dev"
+os = "windows"
+remote_root = 'C:\work'
+note = "Windows build machine. VS 2022, .NET 8"
+
+[remotes.gpu-linux]
+host = "gpu-linux"
+user = "dev"
+port = 2222
+os = "linux"
+agent_path = "/home/dev/.local/bin/devsync"
+remote_root = "/home/dev/work"
+note = "CUDA 12, RTX 4090"
+```
+
+`os`, `remote_root` (the parent of project copies), and `note` are what ssh's
+own config cannot hold. Setting up a project copies the values into its
+`.devsync/config.toml`, with a `# remote: <name>` comment recording the source;
+later catalog edits do not change existing projects. Do not put passwords or
+keys in it.
+
+A short root such as `C:\work` keeps build paths well under Windows' 260-character
+limit and is easy to exempt from antivirus scanning. Folders created directly
+under `C:\` let other local users modify them by default, so on a shared machine
+restrict its ACL or use a folder under your profile instead.
 
 ## Commands
 

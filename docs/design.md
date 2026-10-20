@@ -191,6 +191,41 @@ Forced excludes are always applied, even if the user omits them:
 - `.devsync/`
 - `.git/`
 
+### Remote catalog
+
+`~/.devsync/remotes.toml` is an optional, user-wide list of remote machines.
+devsync itself never reads it: it is a convention for whoever sets up a project
+(usually an AI agent following the skill) to pick a machine from and copy
+values out of. Each project config stays self-contained, so editing the catalog
+changes no existing project, and nothing has to define how the two merge. The
+cost is that a changed address must be updated per project; using an
+`~/.ssh/config` alias as `host` avoids that.
+
+```toml
+[remotes.build-win]
+host = "build-win"        # an ~/.ssh/config alias or an address
+user = "dev"
+os = "windows"
+remote_root = 'C:\work'
+note = "Windows build machine. VS 2022, .NET 8"
+
+[remotes.gpu-linux]
+host = "gpu-linux"
+user = "dev"
+port = 2222
+os = "linux"
+agent_path = "/home/dev/.local/bin/devsync"
+remote_root = "/home/dev/work"
+note = "CUDA 12, RTX 4090"
+```
+
+Fields mirror `[connection]`, plus `os` (`windows` or `linux`), `remote_root`
+(the parent directory for project copies), and a free-form `note` describing
+what the machine is for. Credentials never go in it; ssh owns authentication.
+A project set up from an entry records its name in a leading
+`# remote: <name>` comment in its config. A `devsync init --remote <name>`
+that fills the config from an entry is a possible follow-up, not implemented.
+
 ## 5. Sync Model
 
 Synchronization is one-way:

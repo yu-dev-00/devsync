@@ -35,7 +35,8 @@ side.
 ### Both remotes: the local install and the ssh check
 
 Build with `cargo build --release` (or use a release download), copy
-`targetelease\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\`, and put
+`target
+elease\devsync.exe` into `%LOCALAPPDATA%\Programs\devsync\`, and put
 that directory on the user `PATH`. Do not reach for
 `setx PATH "%PATH%;..."`: `%PATH%` expands to the *merged* system and user value,
 which then gets written back into the user `PATH` and silently truncated at 1024
@@ -56,6 +57,49 @@ password prompt, no banner, not one stray character, because the agent's stdout
 ```bash
 ssh <user>@<host> "echo ok"
 ```
+
+### Picking the remote: `~/.devsync/remotes.toml`
+
+Before asking the user for host details, read `~/.devsync/remotes.toml`
+(`%USERPROFILE%\.devsync
+emotes.toml`). It is an optional, user-maintained
+catalog of remote machines; devsync never reads it, so it may be absent or
+out of date. An entry looks like:
+
+```toml
+[remotes.build-win]
+host = "build-win"        # an ~/.ssh/config alias or an address
+user = "dev"
+os = "windows"
+remote_root = 'C:\work'
+note = "Windows build machine. VS 2022, .NET 8"
+
+[remotes.gpu-linux]
+host = "gpu-linux"
+user = "dev"
+port = 2222
+os = "linux"
+agent_path = "/home/dev/.local/bin/devsync"
+remote_root = "/home/dev/work"
+note = "CUDA 12, RTX 4090"
+```
+
+- **Entries exist:** propose the ones that fit the project, using `os` and
+  `note` (a CUDA project wants the GPU box). The user picks; do not choose
+  silently when more than one fits.
+- **Chosen entry:** use its values for `init` below. `remote_dir` is
+  `remote_root` joined with the project's directory name, unless the user
+  wants otherwise. Add `# remote: <name>` as the first line of the resulting
+  config so the source machine is recorded. Copy `agent_path` when present.
+- **Make sure `remote_dir` is not another project's copy.** Two projects with
+  the same directory name land in the same folder, and `sync --delete` would
+  then wipe the other one. Run `devsync status` first: a long list of planned
+  deletes for a new project means the folder is taken, so pick another name.
+- **Before trusting an entry**, run the `echo ok` check and compare versions;
+  the catalog is a hint, not proof the machine is reachable.
+- **No catalog or no fitting entry:** ask the user. After the new machine works,
+  offer to add it to the catalog (create the file if needed). Never store
+  passwords or keys there.
 
 ### Windows remote
 
@@ -273,7 +317,7 @@ build step writing into a non-excluded source directory, for instance.
 A project with neither `.devsync/config.toml` nor legacy `devsync.toml` is not
 set up for remote builds yet. If the user
 wants it built or run on another machine, set it up — see *Installing devsync*
-above. If they did not ask for that, build locally as usual; devsync is not
+above, starting with the remote catalog. If they did not ask for that, build locally as usual; devsync is not
 something to introduce uninvited.
 
 devsync runs from Windows to a Windows or Linux remote and syncs one way only, so it is not
