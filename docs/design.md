@@ -11,7 +11,7 @@ The tool replaces the earlier SFTP-centered design with an SSH-transported agent
 - SSH is used for authentication, encryption, and process startup.
 - File synchronization and command execution semantics are handled by `devsync` on both sides.
 
-Initial scope is Windows local to Windows remote. Linux, POSIX shells, SFTP sync, daemon mode, and Git-style history management are outside the first implementation.
+Scope is a Windows local machine to a Windows or Linux remote. A Linux local side, SFTP sync, daemon mode, and Git-style history management are outside it.
 
 ## 2. Architecture
 
@@ -351,7 +351,7 @@ Manual E2E tests over real SSH: [manual-test.md](manual-test.md).
 In scope:
 
 - Rust single executable.
-- Windows local to Windows remote.
+- Windows local to Windows or Linux remote (Linux details in section 12).
 - Config file `.devsync/config.toml` (legacy `devsync.toml` still read).
 - `ssh.exe` child process transport.
 - Remote `agent --stdio`.
@@ -365,15 +365,15 @@ Out of scope:
 - SFTP.
 - rsync.
 - Git object storage, history, branches, merge, or bidirectional sync.
-- Linux/POSIX remote support.
+- Linux as the local side.
 - Long-running daemon.
 - Custom TCP, HTTP, WebSocket, or QUIC server.
 - Logs, clean, and shell commands.
 - File permission and symlink preservation.
 
-## 12. Linux Remote (proposed, not implemented)
+## 12. Linux Remote
 
-Linux remotes stay out of scope until the items below land. This section records what was measured and the intended design, so the work does not start from assumptions.
+This section records what was measured against a Linux remote and how each finding was addressed. Item 6 (a release binary) is still open.
 
 Measured 2026-10-20 with Windows `ssh.exe` against Debian bookworm OpenSSH in [docker/linux-remote](../docker/linux-remote/Dockerfile):
 
@@ -393,7 +393,7 @@ Intended design, smallest first:
 2. **Disconnect detection during exec** *(implemented)*. The agent cannot read stdin while a command runs without stealing frames, so it detects a gone client by writing: while the child is silent it sends a `keepalive` frame every second, and a failed write kills the child's process group (spawned with `process_group(0)`). This adds a message type and bumps `PROTOCOL_VERSION`. Windows keeps relying on sshd's teardown; the frame is harmless there. Verified in the container: killing the local `devsync.exe` and `ssh.exe` removes the agent, the shell, and nested or backgrounded children within seconds. A command that calls `setsid` itself leaves the group and is not reached.
 3. **Case spelling converges to local** *(implemented)*. The client plans case-only renames from the two manifests and sends them as `rename` frames before any upload; uploads and deletes are planned against the renamed remote, so a rename costs no re-upload and the agent never scans directories. The same rename fixes spelling on a Windows remote. When the exact directory already exists beside a variant (only possible on Linux), the file is uploaded under the local spelling and `--delete` removes the variant, because renaming would collide. Verified in the container: file and directory renames, a stale `FOO.txt` beside `foo.txt`, and `Lib/` beside `lib/` all converge in one `sync --delete` and stay stable.
 4. **Executable bit by shebang** *(implemented)*. On Unix the agent writes files that start with `#!` as `0755`. Windows has no bit to preserve, so this is the only signal available locally; general permission preservation stays out of scope. The bit is only added, never cleared, so one set by hand on the remote survives.
-5. **Documentation only:** use `.gitattributes` (`*.sh text eol=lf`) for scripts that run remotely, and set `agent_path` explicitly because the default is `devsync.exe`.
+5. **Documentation only** *(done, README "Linux remote")*: use `.gitattributes` (`*.sh text eol=lf`) for scripts that run remotely, and set `agent_path` explicitly because the default is `devsync.exe`.
 6. **Release:** publish an `x86_64-unknown-linux-musl` binary beside the Windows one.
 
 Linux as the *local* side is not part of this proposal.

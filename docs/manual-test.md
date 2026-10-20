@@ -175,6 +175,46 @@ as ANSI, so a UTF-8 file without one is garbled at parse time, before devsync is
 involved. Getting this wrong produces output that looks *almost* right and hides
 whether the transport is actually correct.
 
+## Linux remote (Docker)
+
+[docker/linux-remote](../docker/linux-remote/Dockerfile) stands in for a Linux
+machine. Its sshd is real, so disconnect behavior matches a real host; keep
+`remote_dir` inside the container, since a bind-mounted Windows folder would
+bring NTFS case and permission rules back.
+
+```powershell
+docker build -f docker/linux-remote/Dockerfile -t devsync-linux-remote .
+ssh-keygen -t ed25519 -N '""' -f $HOME\.ssh\devsync-linux
+docker run -d --init --name devsync-linux -p 2222:22 -e AUTHORIZED_KEY="$(Get-Content $HOME\.ssh\devsync-linux.pub)" devsync-linux-remote
+```
+
+Add a host alias to `~/.ssh/config` (devsync passes only `-p` and `user@host`):
+
+```text
+Host devsync-linux
+  HostName localhost
+  IdentityFile ~/.ssh/devsync-linux
+  StrictHostKeyChecking no
+  UserKnownHostsFile NUL
+```
+
+and point a test project at it with `host = "devsync-linux"`, `user = "dev"`,
+`port = 2222`, `agent_path = "devsync"`, `remote_dir = "/home/dev/proj"`.
+Rebuild the image after every agent change; the local binary must match.
+
+| Check | Expected |
+| --- | --- |
+| `status`, `sync` | Same as on Windows. |
+| `exec` of `echo before; exit 7`, a missing command, `printf 'こんにちは
+'` | Exit 7, exit 127, Japanese text intact. |
+| `./build.sh` with an LF `#!/bin/sh` script | Runs; `ls -l` shows `rwxr-xr-x`. |
+| Same script with CRLF | `./build.sh: not found` (exit 127). |
+| `exec` of `echo start; sleep 300`, then Ctrl+C | `docker exec devsync-linux ps -u dev` is empty within seconds. |
+| Rename local `Src/Foo.txt` to `src/foo.txt`, then `status` and `sync` | `~ Src -> src` and `~ src/Foo.txt -> src/foo.txt`, `uploaded: 0`; remote holds `src/foo.txt` only. |
+| Create a remote `src/FOO.txt` beside it, then `sync --delete` | `deleted: 1`; a second `status` plans nothing. |
+
+All of these passed on 2026-10-20.
+
 ## 2026-08-06 results
 
 All Phase 4 and Phase 5 checks passed, including binary integrity (SHA256 match

@@ -1,12 +1,12 @@
 ---
 name: devsync
-description: Build, run, and test Windows projects remotely over SSH using devsync. Use for projects with .devsync/config.toml or legacy devsync.toml, for requested remote build setup, or for troubleshooting devsync sync and execution failures. Supports Codex and Claude Code.
+description: Build, run, and test projects on a remote Windows or Linux machine over SSH using devsync. Use for projects with .devsync/config.toml or legacy devsync.toml, for requested remote build setup, or for troubleshooting devsync sync and execution failures. Supports Codex and Claude Code.
 ---
 
 # devsync
 
 devsync keeps the local project as the source of truth and mirrors it to a
-remote Windows machine that does the building and running. You edit locally; the
+remote Windows or Linux machine that does the building and running. You edit locally; the
 remote is a disposable execution copy.
 
 ## The two mistakes worth avoiding
@@ -141,6 +141,11 @@ exclude = ["target", "node_modules", "bin", "obj"]
 Commands run with `remote_dir` as the working directory. Paths in a command are
 relative to it, not to anything local.
 
+A POSIX `remote_dir` (`/home/dev/project`) means a Linux remote. There commands
+run under `sh -c`, `agent_path` must be set (usually
+`/home/<user>/.local/bin/devsync`), files starting with `#!` arrive executable,
+and nothing converts line endings — a CRLF script fails remotely.
+
 ## Commands
 
 ```bash
@@ -211,6 +216,8 @@ exclude entry, not avoiding `--delete`.
 | `unsupported protocol version: N (agent supports M)` | The two machines are running different builds. Reinstall the remote binary from the same build as the local one. |
 | `no response from the remote agent: ...` | ssh could not reach the host, or the agent is not where the config expects. Check `ssh <user>@<host> "echo ok"` first; ssh's own error usually prints just above. |
 | Non-ASCII output is mangled | The remote agent is likely an old build. Reinstall it. |
+| `./build.sh: not found`, `$'': command not found`, `set: Illegal option -` | Linux remote, CRLF script. Fix line endings (`.gitattributes`: `*.sh text eol=lf`), not the command. |
+| `Permission denied` running a script on Linux | The file has no `#!` line, so it was not marked executable. Add one, or run it as `sh ./script.sh`. |
 | A file you edited did not upload | Check whether an exclude pattern matches it — `status` shows what is in scope. |
 
 For a suspected bad hash cache, delete `.devsync/` on the affected side to force
@@ -230,6 +237,6 @@ wants it built or run on another machine, set it up — see *Installing devsync*
 above. If they did not ask for that, build locally as usual; devsync is not
 something to introduce uninvited.
 
-devsync targets Windows on both ends and syncs one way only, so it is not
+devsync runs from Windows to a Windows or Linux remote and syncs one way only, so it is not
 the tool for fetching artifacts or logs back from the remote — use `scp` for
 that.

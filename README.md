@@ -1,6 +1,6 @@
 # devsync
 
-`devsync` keeps a local Windows project as the source of truth and syncs it to a remote Windows execution copy through an SSH-launched stdio agent.
+`devsync` keeps a local Windows project as the source of truth and syncs it to a remote Windows or Linux execution copy through an SSH-launched stdio agent.
 
 ## Installation
 
@@ -192,6 +192,54 @@ refreshing the skill never costs you your connection details or `[commands]`.
 `docs/manual-test.md` has a fuller checklist for verifying an installation,
 including the failure modes that are easy to miss.
 
+### Linux remote
+
+The local side stays Windows; only the remote changes. Steps 1–3 become:
+
+1. Any OpenSSH server works. As on Windows, `ssh <user>@<host> "echo ok"` must
+   print exactly `ok`: a shell startup file that prints anything corrupts the
+   protocol stream.
+2. Build the agent on the remote with `cargo build --release` and copy
+   `target/release/devsync` to `~/.local/bin/devsync`. The local and remote
+   builds must still come from the same version.
+3. Set `agent_path` to that absolute path. sshd runs the agent from a
+   non-interactive shell, which often does not put `~/.local/bin` on `PATH`, and
+   the default (`devsync.exe`) is the Windows name anyway.
+
+```toml
+[connection]
+host = "linux-box"
+user = "dev"
+agent_path = "/home/dev/.local/bin/devsync"
+
+[paths]
+local_dir = "."
+remote_dir = "/home/dev/work/project"
+
+[commands]
+build = "./build.sh"
+test = "cargo test"
+```
+
+What differs from a Windows remote:
+
+- Commands run under `sh -c` in `remote_dir`, and their exit status is passed
+  through unchanged.
+- An uploaded file that starts with `#!` is made executable, because Windows has
+  no executable bit to send. Other permissions are not synchronized.
+- Files are copied byte for byte, so a CRLF checkout breaks shell scripts
+  (`./build.sh: not found` from a `#!/bin/sh` line, or
+  `set: Illegal option -`). Keep remotely run scripts LF in git with
+  `.gitattributes`, for example `*.sh text eol=lf` and `gradlew text eol=lf`.
+- Ctrl+C stops the remote command and everything it started. A command that
+  calls `setsid` itself escapes this.
+- The local spelling of a name wins: a case-only rename is applied remotely as a
+  rename, and on a case-sensitive remote a stale second spelling is removed by
+  `sync --delete`.
+
+`docker/linux-remote/Dockerfile` builds a disposable Linux remote for trying
+this out; `docs/manual-test.md` walks through it.
+
 ## Commands
 
 ```text
@@ -220,8 +268,8 @@ remote build log you piped somewhere:
 ```text
 [devsync] local manifest: 10 file(s) in 5.1968ms from .
 [devsync] spawning: ssh -p 22 user@remote-pc "devsync.exe" agent --stdio
-[devsync] handshake: agent acknowledged version 3
-[devsync] plan: 1 upload, 0 delete, 9 skip
+[devsync] handshake: agent acknowledged version 4
+[devsync] plan: 0 rename, 1 upload, 0 delete, 9 skip
 [devsync] uploading src/hello.txt (21 bytes)
 [devsync] agent acked: wrote 1 file(s), deleted 0
 ```
@@ -241,8 +289,9 @@ subcommand is fine: `devsync exec sync` runs `commands.sync`, not `devsync sync`
 
 Commands run with `remote_dir` as the working directory, and their output
 streams back as it is produced. The remote command's own exit code becomes
-devsync's exit code. A failing PowerShell cmdlet or command lookup returns a
-nonzero code even when no native program supplied an exit code.
+devsync's exit code. On a Windows remote, a failing PowerShell cmdlet or command
+lookup returns a nonzero code even when no native program supplied an exit
+code. On a Linux remote, commands run under `sh -c`.
 
 See `devsync.toml.example` for the full set of configuration options.
 
@@ -267,7 +316,9 @@ the remote machine are preserved.
 
 Path comparisons and exclude matching ignore case using Windows ordinal rules,
 so `DEVSYNC.TOML` is also excluded and a case-only rename cannot cause the
-uploaded file to be deleted. Existing remote spelling may be retained.
+uploaded file to be deleted. The local spelling wins: a remote file or
+directory spelled differently is renamed in place (`status` lists these as
+`~ old -> new`) rather than uploaded again.
 
 Forced excludes (`devsync.toml`, `.git/`, `.devsync/`) are always protected. Plain
 `devsync sync` (without `--delete`) never deletes existing files; use `--delete` when you
