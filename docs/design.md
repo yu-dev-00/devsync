@@ -368,3 +368,30 @@ Out of scope:
 - Custom TCP, HTTP, WebSocket, or QUIC server.
 - Logs, clean, and shell commands.
 - File permission and symlink preservation.
+
+## 12. Linux Remote (proposed, not implemented)
+
+Linux remotes stay out of scope until the items below land. This section records what was measured and the intended design, so the work does not start from assumptions.
+
+Measured 2026-10-20 with Windows `ssh.exe` against Debian bookworm OpenSSH in [docker/linux-remote](../docker/linux-remote/Dockerfile):
+
+| Area | Result |
+| --- | --- |
+| Build | The crate compiles for Linux unchanged. |
+| `status` / `sync` | Work unchanged with `agent_path = "devsync"` and a POSIX `remote_dir`. |
+| `exec` | Fails: the agent spawns `powershell`, the spawn error propagates out of the message loop, the agent exits, and the client only sees `failed to fill whole buffer`. |
+| Ctrl+C | Killing the local `ssh.exe` does **not** tear down the remote tree. A silent child (`sleep 300`) survives, reparented to PID 1. A child that keeps writing dies on its next write (SIGPIPE). An idle agent exits on stdin EOF. |
+| Executable bit | Uploaded files are `0644`; `./build.sh` fails with `Permission denied` (exit 126). |
+| Line endings | Bytes are copied verbatim, so a CRLF checkout breaks `sh` (`set: Illegal option -`). |
+| Case | A local `Foo.txt` → `foo.txt` rename is not propagated (same `PathKey`, same hash). After a later edit the remote holds both `Foo.txt` and `foo.txt`; the stale one is invisible to the diff and `--delete` never removes it. |
+
+Intended design, smallest first:
+
+1. **Shell per agent OS.** `#[cfg(windows)]` keeps the PowerShell wrapper; otherwise run `sh -c <command>`, whose exit status is already the native code. The agent decides from its own OS, so this needs no protocol change. A spawn failure answers with an `Error` frame instead of ending the agent.
+2. **Disconnect detection during exec.** The agent cannot read stdin while a command runs without stealing frames, so it detects a gone client by writing: while the child is silent it sends a `keepalive` frame every second, and a failed write kills the child's process group (spawned with `process_group(0)`). This adds a message type and bumps `PROTOCOL_VERSION`. Windows keeps relying on sshd's teardown; the frame is harmless there.
+3. **Case spelling converges to local.** The diff also uploads when keys match but spelling differs, and the agent removes a case-variant sibling before writing. On Windows that turns into a case-only rename, so both OSes converge on the local spelling with no protocol change. Directory case variants are not handled.
+4. **Executable bit by shebang.** On Unix the agent writes files that start with `#!` as `0755`. Windows has no bit to preserve, so this is the only signal available locally; general permission preservation stays out of scope.
+5. **Documentation only:** use `.gitattributes` (`*.sh text eol=lf`) for scripts that run remotely, and set `agent_path` explicitly because the default is `devsync.exe`.
+6. **Release:** publish an `x86_64-unknown-linux-musl` binary beside the Windows one.
+
+Linux as the *local* side is not part of this proposal.
