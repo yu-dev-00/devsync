@@ -103,6 +103,25 @@ fn rename_case(root: &Path, from: &str, to: &str) -> Result<()> {
     std::fs::rename(&source, &target).with_context(|| format!("cannot rename {from} -> {to}"))
 }
 
+/// A Windows client has no executable bit to send, so a shebang is the only
+/// local sign that a file is meant to be run as `./build.sh` or `./gradlew`.
+/// The bit is only ever added: one set by hand on the remote survives.
+#[cfg(not(windows))]
+fn mark_executable_if_script(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if bytes.starts_with(b"#!") {
+        let mut permissions = std::fs::metadata(path)?.permissions();
+        permissions.set_mode(permissions.mode() | 0o111);
+        std::fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn mark_executable_if_script(_path: &Path, _bytes: &[u8]) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// The shell that runs a named command on this agent's OS.
 #[cfg(windows)]
 fn shell_command(command: &str) -> std::process::Command {
@@ -396,7 +415,8 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(target, bytes)?;
+                std::fs::write(&target, &bytes)?;
+                mark_executable_if_script(&target, &bytes)?;
                 written_since_ack += 1;
             }
             Message::Rename { from, to } => {

@@ -348,3 +348,25 @@ fn agent_refuses_a_rename_that_changes_more_than_case() {
     }
     assert!(dir.path().join("a.txt").exists());
 }
+
+/// Runs only on a Unix agent; verified on Windows hosts through docker/linux-remote.
+#[cfg(unix)]
+#[test]
+fn agent_marks_shebang_files_executable() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Config {
+        remote_dir: dir.path().to_string_lossy().into_owned(), commands: BTreeMap::new(), exclude: vec![],
+    }).unwrap();
+    for (path, bytes) in [("run.sh", &b"#!/bin/sh\n"[..]), ("data.txt", &b"plain\n"[..])] {
+        protocol::write_message(&mut input, &protocol::Message::File {
+            path: path.into(), size: bytes.len() as u64, hash: blake3::hash(bytes).to_hex().to_string(),
+        }).unwrap();
+        input.extend_from_slice(bytes);
+    }
+    agent::run_agent(Cursor::new(input), Vec::new()).unwrap();
+    let mode = |name: &str| std::fs::metadata(dir.path().join(name)).unwrap().permissions().mode();
+    assert_ne!(mode("run.sh") & 0o111, 0);
+    assert_eq!(mode("data.txt") & 0o111, 0);
+}
