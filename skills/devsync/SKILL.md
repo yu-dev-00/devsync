@@ -140,13 +140,17 @@ devsync init --host <host> --user <user> --remote-dir "C:\work\project"
 print nothing for a non-interactive session, or the `echo ok` check above fails
 for the same reason a PowerShell banner does.
 
-**2. Build the agent on the remote**, from the same version as the local build,
-and install it:
+**2. Install the agent on the remote**, from the same release as the local
+`devsync.exe`: the release's `devsync-x86_64-linux` is statically linked, so it
+runs on any x86_64 distribution.
 
 ```bash
-cargo build --release
-install -D target/release/devsync ~/.local/bin/devsync
+curl -fLO https://github.com/yu-dev-00/devsync/releases/download/v<version>/devsync-x86_64-linux
+install -D -m 755 devsync-x86_64-linux ~/.local/bin/devsync
 ```
+
+For another architecture, build from the matching tag with
+`cargo build --release` and install `target/release/devsync` the same way.
 
 Confirm from the local machine: `ssh <host> "~/.local/bin/devsync --version"`
 matches `devsync --version`.

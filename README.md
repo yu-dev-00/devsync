@@ -230,15 +230,20 @@ remote half of steps 1–3 changes:
 1. Any OpenSSH server works. As on Windows, `ssh <user>@<host> "echo ok"` must
    print exactly `ok`: a shell startup file that prints anything corrupts the
    protocol stream.
-2. On the remote, build the agent from the same version as the local
-   `devsync.exe` (needs Rust; https://rustup.rs) and install it:
+2. On the remote, install `devsync-x86_64-linux` from the same release as the
+   local `devsync.exe` (statically linked, so any x86_64 distribution works):
 
    ```bash
-   git clone --branch v<version> https://github.com/yu-dev-00/devsync.git
-   cd devsync && cargo build --release
-   install -D target/release/devsync ~/.local/bin/devsync
+   curl -fLO https://github.com/yu-dev-00/devsync/releases/download/v<version>/devsync-x86_64-linux
+   curl -fLO https://github.com/yu-dev-00/devsync/releases/download/v<version>/devsync-x86_64-linux.sha256
+   sha256sum -c devsync-x86_64-linux.sha256
+   install -D -m 755 devsync-x86_64-linux ~/.local/bin/devsync
    ~/.local/bin/devsync --version   # must match the local devsync --version
    ```
+
+   For another architecture, or to build it yourself: `git clone --branch
+   v<version> https://github.com/yu-dev-00/devsync.git`, `cargo build --release`,
+   and install `target/release/devsync` the same way.
 3. Set `agent_path` to that absolute path. sshd runs the agent from a
    non-interactive shell, which often does not put `~/.local/bin` on `PATH`, and
    the default (`devsync.exe`) is the Windows name anyway. `init` cannot set it,

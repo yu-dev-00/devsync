@@ -405,7 +405,7 @@ Out of scope:
 
 ## 12. Linux Remote
 
-This section records what was measured against a Linux remote and how each finding was addressed. Item 6 (a release binary) is still open.
+This section records what was measured against a Linux remote and how each finding was addressed.
 
 Measured 2026-10-20 with Windows `ssh.exe` against Debian bookworm OpenSSH in [docker/linux-remote](../docker/linux-remote/Dockerfile):
 
@@ -426,6 +426,6 @@ Intended design, smallest first:
 3. **Case spelling converges to local** *(implemented)*. The client plans case-only renames from the two manifests and sends them as `rename` frames before any upload; uploads and deletes are planned against the renamed remote, so a rename costs no re-upload and the agent never scans directories. The same rename fixes spelling on a Windows remote. When the exact directory already exists beside a variant (only possible on Linux), the file is uploaded under the local spelling and `--delete` removes the variant, because renaming would collide. Verified in the container: file and directory renames, a stale `FOO.txt` beside `foo.txt`, and `Lib/` beside `lib/` all converge in one `sync --delete` and stay stable.
 4. **Executable bit by shebang** *(implemented)*. On Unix the agent writes files that start with `#!` as `0755`. Windows has no bit to preserve, so this is the only signal available locally; general permission preservation stays out of scope. The bit is only added, never cleared, so one set by hand on the remote survives.
 5. **Documentation only** *(done, README "Linux remote")*: use `.gitattributes` (`*.sh text eol=lf`) for scripts that run remotely, and set `agent_path` explicitly because the default is `devsync.exe`.
-6. **Release:** publish an `x86_64-unknown-linux-musl` binary beside the Windows one.
+6. **Release** *(done in v0.2.0)*: an `x86_64-unknown-linux-musl` binary, `devsync-x86_64-linux`, is published beside the Windows one.
 
 Linux as the *local* side is not part of this proposal.
