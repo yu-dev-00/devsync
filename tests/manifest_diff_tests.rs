@@ -74,22 +74,66 @@ fn build_manifest_errors_on_missing_root() {
 
 #[test]
 fn case_only_rename_never_deletes_the_uploaded_file() {
-    for (old, new) in [("Src/Foo.txt", "src/foo.txt"), ("École.txt", "école.txt")] {
-        let local = manifest::Manifest { files: vec![manifest::ManifestEntry {
-            path: new.into(), size: 3, hash: "new".into(),
-        }] };
-        let remote = manifest::Manifest { files: vec![manifest::ManifestEntry {
-            path: old.into(), size: 3, hash: "old".into(),
-        }] };
+    for (old, new, renames) in [
+        ("Src/Foo.txt", "src/foo.txt", vec![("Src", "src"), ("src/Foo.txt", "src/foo.txt")]),
+        ("École.txt", "école.txt", vec![("École.txt", "école.txt")]),
+    ] {
+        let renames: Vec<(String, String)> = renames.into_iter().map(|(f, t)| (f.into(), t.into())).collect();
+        let local = manifest::Manifest { files: vec![entry(new, "new")] };
+        let remote = manifest::Manifest { files: vec![entry(old, "old")] };
         let plan = diff::calculate_diff(&local, &remote, true);
+        assert_eq!(plan.rename, renames);
         assert_eq!(plan.upload, vec![new]);
         assert!(plan.delete.is_empty(), "must not delete the same Windows path: {plan:?}");
-        let mut unchanged = remote.clone();
-        unchanged.files[0].hash = "new".into();
+        let unchanged = manifest::Manifest { files: vec![entry(old, "new")] };
         let plan = diff::calculate_diff(&local, &unchanged, true);
+        assert_eq!(plan.rename, renames, "spelling must follow local even when content matches");
         assert!(plan.upload.is_empty());
         assert_eq!(plan.skipped, 1);
     }
+}
+
+#[test]
+fn shared_directory_rename_is_planned_once_and_deletes_use_the_new_spelling() {
+    let local = manifest::Manifest { files: vec![entry("src/a.txt", "a"), entry("src/B.txt", "b")] };
+    let remote = manifest::Manifest {
+        files: vec![entry("Src/a.txt", "a"), entry("Src/b.txt", "b"), entry("Src/old.txt", "old")],
+    };
+    let plan = diff::calculate_diff(&local, &remote, true);
+    assert_eq!(plan.rename, vec![("Src".into(), "src".into()), ("src/b.txt".into(), "src/B.txt".into())]);
+    assert!(plan.upload.is_empty());
+    assert_eq!(plan.skipped, 2);
+    assert_eq!(plan.delete, vec!["src/old.txt"]);
+}
+
+/// Only a case-sensitive (Linux) remote can list two spellings at once. The
+/// exact one is current; the other is a separate stale file.
+#[test]
+fn stale_case_variant_beside_the_exact_spelling_is_deleted_not_renamed() {
+    let local = manifest::Manifest { files: vec![entry("foo.txt", "new")] };
+    let remote = manifest::Manifest { files: vec![entry("Foo.txt", "old"), entry("foo.txt", "new")] };
+    let plan = diff::calculate_diff(&local, &remote, true);
+    assert!(plan.rename.is_empty());
+    assert!(plan.upload.is_empty());
+    assert_eq!(plan.delete, vec!["Foo.txt"]);
+    assert!(diff::calculate_diff(&local, &remote, false).delete.is_empty());
+}
+
+/// Renaming `Lib` onto an existing `lib` would collide on Linux, so the file is
+/// uploaded under the local spelling and the old directory's copy is stale.
+#[test]
+fn directory_variant_beside_the_exact_directory_uploads_instead_of_renaming() {
+    let local = manifest::Manifest { files: vec![entry("lib/x.txt", "x"), entry("lib/y.txt", "y")] };
+    let remote = manifest::Manifest { files: vec![entry("Lib/x.txt", "x"), entry("lib/y.txt", "y")] };
+    let plan = diff::calculate_diff(&local, &remote, true);
+    assert!(plan.rename.is_empty());
+    assert_eq!(plan.upload, vec!["lib/x.txt"]);
+    assert_eq!(plan.delete, vec!["Lib/x.txt"]);
+    assert_eq!(plan.skipped, 1);
+}
+
+fn entry(path: &str, hash: &str) -> manifest::ManifestEntry {
+    manifest::ManifestEntry { path: path.into(), size: hash.len() as u64, hash: hash.into() }
 }
 
 #[test]

@@ -106,3 +106,25 @@ fn case_only_rename_keeps_remote_content_after_delete_sync() {
     assert_eq!(fs::read_to_string(remote.path().join("foo.txt")).unwrap(), "new");
     assert_eq!(synchronize(local.path(), remote.path(), true, vec![]).unwrap(), (0, 0));
 }
+
+#[test]
+fn case_only_renames_reach_the_remote_without_reuploading() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    fs::create_dir_all(local.path().join("src")).unwrap();
+    fs::write(local.path().join("src/foo.txt"), "same").unwrap();
+    fs::create_dir_all(remote.path().join("Src")).unwrap();
+    fs::write(remote.path().join("Src/Foo.txt"), "same").unwrap();
+    assert_eq!(synchronize(local.path(), remote.path(), true, vec![]).unwrap(), (0, 0));
+    assert_eq!(names(remote.path()), ["src"]);
+    assert_eq!(names(&remote.path().join("src")), ["foo.txt"]);
+    assert_eq!(fs::read_to_string(remote.path().join("src/foo.txt")).unwrap(), "same");
+    assert_eq!(synchronize(local.path(), remote.path(), true, vec![]).unwrap(), (0, 0));
+}
+
+fn names(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir).unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != ".devsync") // the agent's hash cache
+        .collect()
+}

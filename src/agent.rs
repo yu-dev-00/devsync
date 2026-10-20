@@ -85,6 +85,24 @@ fn console_encoding() -> &'static encoding_rs::Encoding {
     encoding_rs::UTF_8
 }
 
+/// Respell `from` as `to`. Only a case change is accepted, so this can never
+/// move content to a different identity. On a case-sensitive remote an
+/// existing `to` is a separate entry, and renaming onto it would replace it.
+fn rename_case(root: &Path, from: &str, to: &str) -> Result<()> {
+    path_safety::validate_relative_path(from)?;
+    path_safety::validate_relative_path(to)?;
+    if path_safety::PathKey::new(from) != path_safety::PathKey::new(to) {
+        bail!("rename {from} -> {to} is not a case-only rename");
+    }
+    let source = root.join(from.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let target = root.join(to.replace('/', std::path::MAIN_SEPARATOR_STR));
+    #[cfg(not(windows))]
+    if target.symlink_metadata().is_ok() {
+        bail!("cannot rename {from} -> {to}: {to} already exists");
+    }
+    std::fs::rename(&source, &target).with_context(|| format!("cannot rename {from} -> {to}"))
+}
+
 /// The shell that runs a named command on this agent's OS.
 #[cfg(windows)]
 fn shell_command(command: &str) -> std::process::Command {
@@ -380,6 +398,18 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                 }
                 std::fs::write(target, bytes)?;
                 written_since_ack += 1;
+            }
+            Message::Rename { from, to } => {
+                let Some(config) = &config else {
+                    protocol::write_message(
+                        &mut writer,
+                        &Message::Error { message: "agent config has not been received".into() },
+                    )?;
+                    continue;
+                };
+                if let Err(error) = rename_case(&config.remote_dir, &from, &to) {
+                    protocol::write_message(&mut writer, &Message::Error { message: format!("{error:#}") })?;
+                }
             }
             Message::SyncPlan { upload: _, delete } => {
                 let Some(config) = &config else {

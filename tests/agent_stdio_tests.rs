@@ -330,3 +330,21 @@ fn agent_applies_configured_excludes_to_remote_manifest() {
         other => panic!("unexpected response: {other:?}"),
     }
 }
+
+#[test]
+fn agent_refuses_a_rename_that_changes_more_than_case() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    let mut input = Vec::new();
+    protocol::write_message(&mut input, &protocol::Message::Config {
+        remote_dir: dir.path().to_string_lossy().into_owned(), commands: BTreeMap::new(), exclude: vec![],
+    }).unwrap();
+    protocol::write_message(&mut input, &protocol::Message::Rename { from: "a.txt".into(), to: "b.txt".into() }).unwrap();
+    let mut output = Vec::new();
+    agent::run_agent(Cursor::new(input), &mut output).unwrap();
+    match protocol::read_message(&mut Cursor::new(output)).unwrap() {
+        protocol::Message::Error { message } => assert!(message.contains("case-only"), "got: {message}"),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    assert!(dir.path().join("a.txt").exists());
+}

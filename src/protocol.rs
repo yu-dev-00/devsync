@@ -15,6 +15,8 @@ pub enum Message {
     ManifestRequest,
     Manifest { files: Vec<crate::manifest::ManifestEntry> },
     SyncPlan { upload: Vec<String>, delete: Vec<String> },
+    /// Case-only rename, so a remote spelling follows the local one.
+    Rename { from: String, to: String },
     File { path: String, size: u64, hash: String },
     SyncComplete { uploaded: usize, deleted: usize, skipped: usize },
     Exec { name: String },

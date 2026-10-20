@@ -30,6 +30,12 @@ pub fn status(config: &Config) -> Result<()> {
     let remote_manifest = remote_manifest(config)?;
     let plan = diff::calculate_diff(&local_manifest, &remote_manifest, true);
 
+    if !plan.rename.is_empty() {
+        println!("rename: {}", plan.rename.len());
+        for (from, to) in &plan.rename {
+            println!("  ~ {from} -> {to}");
+        }
+    }
     println!("upload: {}", plan.upload.len());
     for path in &plan.upload {
         println!("  + {path}");
@@ -80,7 +86,8 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
     crate::vlog!("remote manifest: {} file(s)", remote_manifest.files.len());
     let plan = diff::calculate_diff(&local_manifest, &remote_manifest, delete);
     crate::vlog!(
-        "plan: {} upload, {} delete, {} skip",
+        "plan: {} rename, {} upload, {} delete, {} skip",
+        plan.rename.len(),
         plan.upload.len(),
         plan.delete.len(),
         plan.skipped
@@ -88,6 +95,9 @@ pub fn sync(config: &Config, delete: bool) -> Result<()> {
 
     let (reader, writer) = client.streams();
     let (uploaded, deleted) = apply_plan(&config.paths.local_dir, &plan, reader, writer)?;
+    if !plan.rename.is_empty() {
+        println!("renamed: {}", plan.rename.len());
+    }
     println!("uploaded: {uploaded}");
     println!("deleted: {deleted}");
     println!("skipped: {}", plan.skipped);
@@ -105,8 +115,16 @@ pub fn apply_plan<R: Read, W: Write>(
     // Only explicitly planned deletions may clear a file/directory collision.
     // Keep unrelated deletions after uploads, as before. Acknowledge the first
     // batch before sending bytes so neither stale errors nor counts leak across.
-    for path in plan.upload.iter().chain(&plan.delete) {
+    let renamed = plan.rename.iter().flat_map(|(from, to)| [from, to]);
+    for path in plan.upload.iter().chain(&plan.delete).chain(renamed) {
         validate_relative_path(path)?;
+    }
+    // Renames go first: uploads and deletes are planned against the renamed
+    // remote. Like uploads they are not acked one by one; an agent Error
+    // surfaces at the next SyncComplete read.
+    for (from, to) in &plan.rename {
+        crate::vlog!("renaming {from} -> {to}");
+        protocol::write_message(writer, &Message::Rename { from: from.clone(), to: to.clone() })?;
     }
     let (blocking, remaining): (Vec<_>, Vec<_>) = plan.delete.iter().cloned().partition(|deleted| {
         plan.upload.iter().any(|uploaded| {
