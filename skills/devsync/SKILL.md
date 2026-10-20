@@ -93,8 +93,10 @@ note = "CUDA 12, RTX 4090"
   config so the source machine is recorded. Copy `agent_path` when present.
 - **Make sure `remote_dir` is not another project's copy.** Two projects with
   the same directory name land in the same folder, and `sync --delete` would
-  then wipe the other one. Run `devsync status` first: a long list of planned
-  deletes for a new project means the folder is taken, so pick another name.
+  then wipe the other one. Before `init`, check the folder is free
+  (`ssh <host> "if exist C:\work\<name> echo TAKEN"`, or `test -e` on Linux).
+  After `init`, `devsync status` must plan no deletes for a project that has
+  never been synced; even one means the folder is taken, so pick another name.
 - **Before trusting an entry**, run the `echo ok` check and compare versions;
   the catalog is a hint, not proof the machine is reachable.
 - **No catalog or no fitting entry:** ask the user. After the new machine works,
