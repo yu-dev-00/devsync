@@ -85,6 +85,28 @@ fn console_encoding() -> &'static encoding_rs::Encoding {
     encoding_rs::UTF_8
 }
 
+/// The shell that runs a named command on this agent's OS.
+#[cfg(windows)]
+fn shell_command(command: &str) -> std::process::Command {
+    // Preserve native exit codes, but a failing cmdlet/command lookup
+    // has no native code (or leaves a previous zero). Test $? before
+    // another statement overwrites it. A newline also ends comments.
+    let wrapped_command = format!(
+        "{command}\nif (-not $?) {{ if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; exit 1 }}\nexit $LASTEXITCODE"
+    );
+    let mut shell = std::process::Command::new("powershell");
+    shell.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &wrapped_command]);
+    shell
+}
+
+/// `sh -c` already exits with the command's own status, so no wrapper is needed.
+#[cfg(not(windows))]
+fn shell_command(command: &str) -> std::process::Command {
+    let mut shell = std::process::Command::new("sh");
+    shell.arg("-c").arg(command);
+    shell
+}
+
 /// Longest byte sequence any console code page needs for one character. The
 /// Windows DBCS code pages top out at two; the extra byte is slack.
 const MAX_CONSOLE_SEQUENCE: usize = 3;
@@ -332,26 +354,28 @@ pub fn run_agent<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<()> 
                     continue;
                 };
 
-                // Preserve native exit codes, but a failing cmdlet/command lookup
-                // has no native code (or leaves a previous zero). Test $? before
-                // another statement overwrites it. A newline also ends comments.
-                let wrapped_command = format!(
-                    "{command}\nif (-not $?) {{ if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; exit 1 }}\nexit $LASTEXITCODE"
-                );
-
                 // stdin MUST be null: the agent's own stdin is the protocol stream, and
                 // an inherited handle would let the child consume frames meant for us.
-                let mut child = std::process::Command::new("powershell")
-                    .arg("-NoProfile")
-                    .arg("-ExecutionPolicy")
-                    .arg("Bypass")
-                    .arg("-Command")
-                    .arg(&wrapped_command)
+                let mut shell = shell_command(command);
+                let spawned = shell
                     .current_dir(&config.remote_dir)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
-                    .spawn()?;
+                    .spawn();
+                // A missing shell is a recoverable answer, not a reason to end the
+                // session: the client would only see the stream close.
+                let mut child = match spawned {
+                    Ok(child) => child,
+                    Err(error) => {
+                        let shell = shell.get_program().to_string_lossy().into_owned();
+                        protocol::write_message(
+                            &mut writer,
+                            &Message::Error { message: format!("failed to start {shell}: {error}") },
+                        )?;
+                        continue;
+                    }
+                };
 
                 let child_stdout = child.stdout.take().expect("stdout was piped");
                 let child_stderr = child.stderr.take().expect("stderr was piped");
